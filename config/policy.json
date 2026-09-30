@@ -1,0 +1,9 @@
+{
+  "_help": "Safety policy. Testing phase: keep require_approval true. JARVIS reads the policy but never edits it; only you do.",
+  "require_approval_for_actions": true,
+  "require_approval_for_learning": true,
+  "chat_allowed_tools": ["Read", "Grep", "Glob", "WebSearch"],
+  "always_blocked_tools": ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch"],
+  "max_pending": 50,
+  "claude_timeout_seconds": 240
+}

@@ -1,0 +1,5 @@
+.env
+logs/
+proposals/
+config/*.bak
+__pycache__/
