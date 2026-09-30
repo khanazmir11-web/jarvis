@@ -2,6 +2,7 @@
 rem Start JARVIS on Windows. Double-click this file, then open http://127.0.0.1:8720
 cd /d "%~dp0"
 set ANTHROPIC_API_KEY=
+set PYTHONUTF8=1
 if "%JARVIS_CLAUDE_BIN%"=="" (
   where claude >nul 2>nul && set JARVIS_CLAUDE_BIN=claude
 )
