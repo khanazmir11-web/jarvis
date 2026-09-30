@@ -42,7 +42,7 @@ for d in (PROPOSALS / "learn", LOGS):
 # ---------------------------------------------------------------- helpers
 def load_json(path, default):
     try:
-        return json.loads(Path(path).read_text())
+        return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default
 
@@ -57,13 +57,13 @@ def accounts():
 
 def audit(kind, **data):
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, **data}
-    with LOCK, open(LOGS / "audit.jsonl", "a") as f:
+    with LOCK, open(LOGS / "audit.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
 
 
 def tail_jsonl(path, n):
     try:
-        lines = Path(path).read_text().splitlines()[-n:]
+        lines = Path(path).read_text(encoding="utf-8").splitlines()[-n:]
     except OSError:
         return []
     out = []
@@ -81,7 +81,7 @@ LINK = re.compile(r"\[\[([^\]|#]+)")
 
 
 def parse_note(path):
-    text = path.read_text(errors="replace")
+    text = path.read_text(encoding="utf-8", errors="replace")
     meta, body = {}, text
     m = FRONT.match(text)
     if m:
@@ -143,7 +143,7 @@ def relevant_notes(question, k=5):
     words = {w for w in re.findall(r"[a-z0-9]{4,}", question.lower())}
     scored = []
     for path in VAULT.rglob("*.md"):
-        text = path.read_text(errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
         low = text.lower()
         score = sum(low.count(w) for w in words) + 5 * sum(w in path.stem for w in words)
         if score:
@@ -197,11 +197,11 @@ def security_report():
     add("Server only on this device", HOST == "127.0.0.1", f"listening on {HOST}:{PORT}")
     add("No paid API key in environment", not os.environ.get("ANTHROPIC_API_KEY"),
         "ANTHROPIC_API_KEY would switch you to per-token billing", "medium")
-    gi = (ROOT / ".gitignore").read_text() if (ROOT / ".gitignore").exists() else ""
+    gi = (ROOT / ".gitignore").read_text(encoding="utf-8") if (ROOT / ".gitignore").exists() else ""
     add(".env and logs kept out of git", ".env" in gi and "logs/" in gi, ".gitignore entries")
     leaks = []
     for path in list(VAULT.rglob("*.md")) + list(CONFIG.glob("*.json")):
-        text = path.read_text(errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
         for pat, why in SECRET_PATTERNS:
             if re.search(pat, text):
                 leaks.append(f"{why} in {path.name}")
@@ -256,7 +256,8 @@ def run_claude(prompt, allowed, system, on_text=None):
     """Run Claude Code headless on your subscription and return the final text."""
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     proc = subprocess.Popen(claude_cmd(prompt, allowed, system), cwd=VAULT, env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace")
     timer = threading.Timer(policy().get("claude_timeout_seconds", 240), proc.kill)
     timer.start()
     final, tools_used = "", []
@@ -307,7 +308,7 @@ def extract_proposals(text, origin):
             item = {"id": pid, "kind": "learn", "created": time.time(), "origin": origin,
                     "flags": flags, "title": str(data.get("title", "untitled"))[:80],
                     "type": str(data.get("type", "memory")), "body": str(data.get("body", ""))}
-        (PROPOSALS / f"{pid}.json").write_text(json.dumps(item, indent=2))
+        (PROPOSALS / f"{pid}.json").write_text(json.dumps(item, indent=2), encoding="utf-8")
         audit("proposal", id=pid, proposal_kind=kind, flags=flags, origin=origin[:200])
         created.append(item)
     return created
@@ -333,7 +334,7 @@ def approve(pid):
         folder.mkdir(parents=True, exist_ok=True)
         dest = folder / f"{slug(item['title'])}.md"
         dest.write_text(f"---\ntitle: {item['title']}\ntype: {item['type']}\nlearned: "
-                        f"{time.strftime('%Y-%m-%d')}\napproved_by: you\n---\n{item['body']}\n")
+                        f"{time.strftime('%Y-%m-%d')}\napproved_by: you\n---\n{item['body']}\n", encoding="utf-8")
         audit("learn_approved", id=pid, note=str(dest.relative_to(VAULT)))
         return {"ok": True, "note": dest.stem}
     acc = next((a for a in accounts() if a["id"] == item["account"]), None)
@@ -389,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {"error": "blocked host"})
         path = urlparse(self.path).path
         if path == "/":
-            html = (WEB / "index.html").read_text().replace("__JARVIS_TOKEN__", TOKEN)
+            html = (WEB / "index.html").read_text(encoding="utf-8").replace("__JARVIS_TOKEN__", TOKEN)
             return self.send(200, html.encode(), "text/html; charset=utf-8")
         if path == "/sw.js":  # served from the root so it can cover the whole app
             return self.send(200, (WEB / "sw.js").read_bytes(), "text/javascript")
@@ -475,7 +476,7 @@ def answer(message, channel, emit=lambda obj: None):
 def refresh_accounts():
     """Mark accounts connected when `claude mcp list` shows a matching server."""
     try:
-        out = subprocess.run([CLAUDE_BIN, "mcp", "list"], capture_output=True, text=True,
+        out = subprocess.run([CLAUDE_BIN, "mcp", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=60).stdout.lower()
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"error": f"could not run claude mcp list: {e}"}
@@ -490,7 +491,7 @@ def refresh_accounts():
             acc["status"] = new
             changed.append(acc["id"])
     shutil.copy(CONFIG / "accounts.json", CONFIG / "accounts.json.bak")
-    (CONFIG / "accounts.json").write_text(json.dumps(data, indent=2))
+    (CONFIG / "accounts.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     audit("accounts_refreshed", changed=changed)
     return {"changed": changed}
 

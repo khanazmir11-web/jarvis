@@ -28,7 +28,7 @@ def main():
     flags = server.scan(text)
     server.extract_proposals(text, "monitor")
     if text.strip() != "ALL CLEAR":
-        with open(server.LOGS / "alerts.jsonl", "a") as f:
+        with open(server.LOGS / "alerts.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "text": text, "flags": flags}) + "\n")
     server.audit("monitor", tools=tools, flags=flags, clear=text.strip() == "ALL CLEAR")
     print(text)
