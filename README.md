@@ -11,6 +11,8 @@ cd jarvis/app
 ./start.sh            # then open http://127.0.0.1:8720
 ```
 
+On Windows, double-click `start.bat` instead. It finds the Claude Code that comes with the Claude desktop app and opens the browser for you.
+
 No pip installs are needed. Don't set `ANTHROPIC_API_KEY`: it switches you from your subscription to paid per-token billing.
 
 ## Install it as an app
