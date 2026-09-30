@@ -43,8 +43,9 @@
   </form>
 </aside>
 
-<div id="camWrap" hidden><video id="cam" playsinline muted></video><canvas id="camOverlay"></canvas>
-  <div id="gestureHint">☝ point · 🤏 pinch = select · pinch-drag = move · ✋ hold = reset · 🤏🤏 two hands = zoom</div></div>
+<video id="cam" playsinline muted hidden></video>
+<canvas id="handLayer" hidden></canvas>
+<div id="gestureHint" hidden>☝ point · 🤏 pinch = select · pinch-drag = move · ✋ hold = reset · 🤏🤏 two hands = zoom</div>
 
 <script src="/web/hud.js"></script>
 <script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");</script>

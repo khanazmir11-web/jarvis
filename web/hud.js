@@ -38,7 +38,7 @@
     edges = g.edges.map(([s, t]) => [byId[s], byId[t]]).filter(([s, t]) => s && t);
     const deg = {}; edges.forEach(([s, t]) => { deg[s.id] = (deg[s.id] || 0) + 1; deg[t.id] = (deg[t.id] || 0) + 1; });
     nodes.forEach((n) => { if (!["core", "hub", "account"].includes(n.type)) n.r = 5 + Math.min(8, (deg[n.id] || 0)); });
-    buildFilters();
+    heat = 1; buildFilters();
   }
 
   function buildFilters() {
@@ -46,31 +46,36 @@
     [...new Set(nodes.map((n) => n.type))].forEach((t) => {
       const l = document.createElement("label");
       l.textContent = t; l.style.color = TYPES[t] || "#aaa"; l.className = hidden.has(t) ? "off" : "";
-      l.onclick = () => { hidden.has(t) ? hidden.delete(t) : hidden.add(t); l.className = hidden.has(t) ? "off" : ""; };
+      l.onclick = () => { heat = 1; hidden.has(t) ? hidden.delete(t) : hidden.add(t); l.className = hidden.has(t) ? "off" : ""; };
       f.appendChild(l);
     });
   }
 
   const visible = (n) => !hidden.has(n.type);
 
+  // The layout "cools down" so the graph settles and stops moving; dragging or reloading reheats it.
+  let heat = 1;
   function step() {
+    heat = Math.max(0, heat * 0.985);
+    if (heat < 0.01 && !dragging) return;
     const vis = nodes.filter(visible);
     for (let i = 0; i < vis.length; i++) for (let j = i + 1; j < vis.length; j++) {
       const a = vis[i], b = vis[j]; let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy + 0.01;
       if (d2 > 250000) continue;
-      const f = 1800 / d2; dx *= f; dy *= f; a.vx += dx; a.vy += dy; b.vx -= dx; b.vy -= dy;
+      const f = 1800 * heat / d2; dx *= f; dy *= f; a.vx += dx; a.vy += dy; b.vx -= dx; b.vy -= dy;
     }
     edges.forEach(([a, b]) => {
       if (!visible(a) || !visible(b)) return;
       const rest = a.type === "core" || b.type === "core" ? 230 : 80;
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - rest) * 0.02;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - rest) * 0.02 * heat;
       a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
     });
     vis.forEach((n) => {
       if (n.type === "core") { n.x = n.y = 0; return; }
       if (n === dragging) return;
-      n.vx -= n.x * 0.004; n.vy -= n.y * 0.004;
-      n.vx *= 0.82; n.vy *= 0.82; n.x += Math.max(-8, Math.min(8, n.vx)); n.y += Math.max(-8, Math.min(8, n.vy));
+      n.vx -= n.x * 0.004 * heat; n.vy -= n.y * 0.004 * heat;
+      n.vx *= 0.7; n.vy *= 0.7;
+      if (Math.abs(n.vx) < 0.02) n.vx = 0; if (Math.abs(n.vy) < 0.02) n.vy = 0; n.x += Math.max(-8, Math.min(8, n.vx)); n.y += Math.max(-8, Math.min(8, n.vy));
     });
   }
 
@@ -199,11 +204,11 @@
   let dragging = null, panFrom = null;
   canvas.addEventListener("pointerdown", (e) => {
     const n = nodeAt(e.clientX, e.clientY);
-    if (n) { dragging = n; select(n); } else panFrom = [e.clientX, e.clientY, view.x, view.y];
+    if (n) { dragging = n; heat = Math.max(heat, 0.3); select(n); } else panFrom = [e.clientX, e.clientY, view.x, view.y];
   });
   addEventListener("pointermove", (e) => {
     hover = nodeAt(e.clientX, e.clientY);
-    if (dragging) { const [wx, wy] = toWorld(e.clientX * devicePixelRatio, e.clientY * devicePixelRatio); dragging.x = wx; dragging.y = wy; }
+    if (dragging) { const [wx, wy] = toWorld(e.clientX * devicePixelRatio, e.clientY * devicePixelRatio); dragging.x = wx; dragging.y = wy; heat = Math.max(heat, 0.3); }
     else if (panFrom) { userMoved = true; target = null; view.x = panFrom[2] + (e.clientX - panFrom[0]) * devicePixelRatio; view.y = panFrom[3] + (e.clientY - panFrom[1]) * devicePixelRatio; }
   });
   addEventListener("pointerup", () => { dragging = null; panFrom = null; });
@@ -232,6 +237,7 @@
     hover: (cx, cy) => { hover = nodeAt(cx, cy); return hover; },
     pick: (cx, cy) => { const n = nodeAt(cx, cy); if (n) select(n); return n; },
     panBy: (dx, dy) => { userMoved = true; target = null; view.x += dx * devicePixelRatio; view.y += dy * devicePixelRatio; },
+    positions: () => nodes.map((n) => [n.x, n.y]),
     zoomBy, reset, talk: (on) => { talking = Math.max(0, talking + (on ? 1 : -1)); }, setMode: (m) => { $("mode").textContent = m; },
   };
 
