@@ -327,7 +327,7 @@
       }
     } catch (err) { out.textContent = "⚠ " + err; }
     if (talkingText) window.HUD.talk(false);
-    document.querySelector(".dial").classList.remove("busy"); $("mode").textContent = "STANDBY"; refresh();
+    document.querySelector(".dial").classList.remove("busy"); $("mode").textContent = "STANDBY"; idleMode(); refresh();
   });
 
   // voice (browser built-ins; Fish Audio voice is a later phase)
@@ -339,7 +339,7 @@
     u.voice = voices.find((v) => /en-GB/.test(v.lang) && /male|daniel|george|arthur/i.test(v.name)) || voices.find((v) => /en-GB/.test(v.lang)) || null;
     u.rate = 1.05; u.pitch = 0.9;
     u.onstart = () => { if (!on) { on = true; window.HUD.talk(true); } };
-    u.onend = u.onerror = () => { if (on) { on = false; window.HUD.talk(false); } };
+    u.onend = u.onerror = () => { if (on) { on = false; window.HUD.talk(false); } idleMode(); };
     speechSynthesis.speak(u);
   }
   let voiceOn = true;
@@ -347,14 +347,68 @@
     voiceOn = !voiceOn; $("voiceBtn").textContent = voiceOn ? "🔊 Voice" : "🔇 Voice";
     if (!voiceOn && window.speechSynthesis) speechSynthesis.cancel();
   };
+  // ---------------------------------------------------------------- "Hey Jarvis" wake word
+  // Always-on listening in the browser. Say "Hey Jarvis" then your question, in one go
+  // ("Hey Jarvis, what's on my calendar") or with a pause ("Hey Jarvis" ... "what's on my calendar").
+  // Nothing is sent to JARVIS until it hears the wake word. Toggle with the 👂 button.
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const WAKE = /\b(?:hey|hi|ok|okay|yo)[\s,]+(?:jarvis|jervis|travis|service)\b[\s,.!?]*/i;
+  const AWAKE_MS = 8000;
+  let wakeOn = false, rec = null, awakeUntil = 0, restartDelay = 300;
+  try { wakeOn = localStorage.getItem("jarvis.wake") !== "off"; } catch {}
+  const busy = () => document.querySelector(".dial").classList.contains("busy") || (window.speechSynthesis && speechSynthesis.speaking);
+  const idleMode = () => { if (!busy()) $("mode").textContent = wakeOn ? "EARS ON" : "STANDBY"; };
+
+  function ask(text) {
+    awakeUntil = 0; $("msg").value = text; $("ask").requestSubmit();
+  }
+  function wakeUp() {
+    awakeUntil = Date.now() + AWAKE_MS; $("mode").textContent = "LISTENING";
+    window.HUD.talk(true); setTimeout(() => window.HUD.talk(false), 500);  // quick glow so you know it heard you
+    setTimeout(() => { if (awakeUntil && Date.now() >= awakeUntil) { awakeUntil = 0; idleMode(); } }, AWAKE_MS + 50);
+  }
+  function startWake() {
+    if (!SR || !wakeOn || rec) return;
+    rec = new SR(); rec.lang = "en-US"; rec.continuous = true; rec.interimResults = false;
+    rec.onresult = (e) => {
+      if (busy()) return;  // don't let JARVIS hear itself talking
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue;
+        const heard = e.results[i][0].transcript.trim();
+        const m = heard.match(WAKE);
+        if (m) {
+          const rest = heard.slice(m.index + m[0].length).trim();
+          rest.length > 2 ? ask(rest) : wakeUp();
+        } else if (awakeUntil > Date.now() && heard.length > 2) ask(heard);
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        setWake(false); say("jarvis", "I'd love to listen, but the microphone is blocked. Allow it in the address bar, then press 👂.");
+      } else if (e.error === "network") restartDelay = Math.min(10000, restartDelay * 2);
+    };
+    rec.onstart = () => { restartDelay = 300; idleMode(); };
+    rec.onend = () => { rec = null; if (wakeOn) setTimeout(startWake, restartDelay); };  // Chrome stops every minute or so; just restart
+    try { rec.start(); } catch { rec = null; }
+  }
+  function setWake(on) {
+    wakeOn = on; try { localStorage.setItem("jarvis.wake", on ? "on" : "off"); } catch {}
+    $("wakeBtn").textContent = on ? "👂 Hey Jarvis" : "👂 Off"; $("wakeBtn").classList.toggle("on", on);
+    if (on) startWake(); else if (rec) { const r = rec; rec = null; r.onend = null; r.abort(); }
+    idleMode();
+  }
+  if (!SR) $("wakeBtn").hidden = true;
+  else { $("wakeBtn").onclick = () => setWake(!wakeOn); setWake(wakeOn); }
+
+  // 🎙 button: talk without saying the wake word
   $("micBtn").onclick = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { say("jarvis", "This browser has no speech recognition. Try Chrome."); return; }
+    if (!SR) { say("jarvis", "This browser has no speech recognition. Try Chrome or Edge."); return; }
+    if (rec) { wakeUp(); return; }  // the always-on listener is already running, just open the window
     const r = new SR(); r.lang = "en-US"; $("mode").textContent = "LISTENING"; let heard = false;
     r.onspeechstart = () => { if (!heard) { heard = true; window.HUD.talk(true); } };
     r.onspeechend = () => { if (heard) { heard = false; window.HUD.talk(false); } };
-    r.onresult = (e) => { $("msg").value = e.results[0][0].transcript; $("ask").requestSubmit(); };
-    r.onend = () => { if (heard) { heard = false; window.HUD.talk(false); } if ($("mode").textContent === "LISTENING") $("mode").textContent = "STANDBY"; };
+    r.onresult = (e) => ask(e.results[0][0].transcript);
+    r.onend = () => { if (heard) { heard = false; window.HUD.talk(false); } if ($("mode").textContent === "LISTENING") idleMode(); };
     r.start();
   };
 
