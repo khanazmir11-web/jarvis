@@ -9,6 +9,7 @@ button:hover,button.on{background:rgba(39,211,255,.12)}
 .dial{width:92px;height:92px;border-radius:50%;border:2px solid var(--cyan);box-shadow:0 0 22px rgba(39,211,255,.45),inset 0 0 18px rgba(39,211,255,.25);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;letter-spacing:.5px;flex:none}
 .dial small{color:var(--dim);font-size:9px;margin-top:3px}
 .dial.busy{animation:pulse 1s infinite}
+.dial.awake{animation:pulse .6s infinite;border-color:#fff}
 @keyframes pulse{50%{box-shadow:0 0 40px rgba(39,211,255,.9),inset 0 0 26px rgba(39,211,255,.5)}}
 #filters{display:flex;flex-wrap:wrap;gap:6px}
 #filters label{border:1px solid var(--line);border-radius:12px;padding:2px 9px;font-size:12px;cursor:pointer;user-select:none}

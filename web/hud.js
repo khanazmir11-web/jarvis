@@ -353,33 +353,60 @@
   // Nothing is sent to JARVIS until it hears the wake word. Toggle with the 👂 button.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const WAKE = /\b(?:hey|hi|ok|okay|yo)[\s,]+(?:jarvis|jervis|travis|service)\b[\s,.!?]*/i;
-  const AWAKE_MS = 8000;
-  let wakeOn = false, rec = null, awakeUntil = 0, restartDelay = 300;
+  const AWAKE_MS = 10000;   // how long it waits for your question after "Hey Jarvis"
+  let wakeOn = false, rec = null, awakeUntil = 0, awakeGlow = false, restartDelay = 300, chimeCtx = null;
   try { wakeOn = localStorage.getItem("jarvis.wake") !== "off"; } catch {}
   const busy = () => document.querySelector(".dial").classList.contains("busy") || (window.speechSynthesis && speechSynthesis.speaking);
-  const idleMode = () => { if (!busy()) $("mode").textContent = wakeOn ? "EARS ON" : "STANDBY"; };
+  const idleMode = () => { if (!busy() && !awakeGlow) $("mode").textContent = wakeOn ? "EARS ON" : "STANDBY"; };
+
+  function chime() {  // short rising beep so you hear that it woke up
+    try {
+      chimeCtx = chimeCtx || new AudioContext(); chimeCtx.resume();
+      const o = chimeCtx.createOscillator(), g = chimeCtx.createGain(), t = chimeCtx.currentTime;
+      o.frequency.setValueAtTime(660, t); o.frequency.linearRampToValueAtTime(990, t + 0.12);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.15, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+      o.connect(g).connect(chimeCtx.destination); o.start(t); o.stop(t + 0.3);
+    } catch {}
+  }
+  // Awake = lines glow, the dial pulses and says LISTENING, and it stays that way until you finish
+  // your question or go quiet for 10 seconds. Anything you say keeps it awake.
+  function wakeUp() {
+    awakeUntil = Date.now() + AWAKE_MS;
+    if (awakeGlow) return;
+    awakeGlow = true; chime(); window.HUD.talk(true);
+    document.querySelector(".dial").classList.add("awake"); $("mode").textContent = "LISTENING";
+    $("msg").placeholder = "Listening…";
+  }
+  function sleep() {
+    awakeUntil = 0;
+    if (!awakeGlow) return;
+    awakeGlow = false; window.HUD.talk(false);
+    document.querySelector(".dial").classList.remove("awake"); $("msg").placeholder = "Ask JARVIS…";
+    idleMode();
+  }
+  setInterval(() => { if (awakeGlow && Date.now() > awakeUntil) { $("msg").value = ""; sleep(); } }, 250);
 
   function ask(text) {
-    awakeUntil = 0; $("msg").value = text; $("ask").requestSubmit();
+    sleep(); $("msg").value = text; $("ask").requestSubmit();
   }
-  function wakeUp() {
-    awakeUntil = Date.now() + AWAKE_MS; $("mode").textContent = "LISTENING";
-    window.HUD.talk(true); setTimeout(() => window.HUD.talk(false), 500);  // quick glow so you know it heard you
-    setTimeout(() => { if (awakeUntil && Date.now() >= awakeUntil) { awakeUntil = 0; idleMode(); } }, AWAKE_MS + 50);
-  }
+  const afterWake = (t) => { const m = t.match(WAKE); return m ? t.slice(m.index + m[0].length).trim() : null; };
+
   function startWake() {
     if (!SR || !wakeOn || rec) return;
-    rec = new SR(); rec.lang = "en-US"; rec.continuous = true; rec.interimResults = false;
+    rec = new SR(); rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
     rec.onresult = (e) => {
       if (busy()) return;  // don't let JARVIS hear itself talking
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (!e.results[i].isFinal) continue;
         const heard = e.results[i][0].transcript.trim();
-        const m = heard.match(WAKE);
-        if (m) {
-          const rest = heard.slice(m.index + m[0].length).trim();
-          rest.length > 2 ? ask(rest) : wakeUp();
-        } else if (awakeUntil > Date.now() && heard.length > 2) ask(heard);
+        const rest = afterWake(heard);
+        if (!e.results[i].isFinal) {
+          // live: wake the moment "Hey Jarvis" is heard, and show what you're saying in the box
+          if (rest !== null) wakeUp();
+          if (awakeGlow) { awakeUntil = Date.now() + AWAKE_MS; $("msg").value = rest !== null ? rest : heard; }
+          continue;
+        }
+        if (rest !== null) rest.length > 2 ? ask(rest) : wakeUp();
+        else if (awakeGlow && heard.length > 2) ask(heard);
       }
     };
     rec.onerror = (e) => {
@@ -394,7 +421,7 @@
   function setWake(on) {
     wakeOn = on; try { localStorage.setItem("jarvis.wake", on ? "on" : "off"); } catch {}
     $("wakeBtn").textContent = on ? "👂 Hey Jarvis" : "👂 Off"; $("wakeBtn").classList.toggle("on", on);
-    if (on) startWake(); else if (rec) { const r = rec; rec = null; r.onend = null; r.abort(); }
+    if (on) startWake(); else { sleep(); if (rec) { const r = rec; rec = null; r.onend = null; r.abort(); } }
     idleMode();
   }
   if (!SR) $("wakeBtn").hidden = true;
