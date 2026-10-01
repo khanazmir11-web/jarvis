@@ -8,6 +8,9 @@
 //   pinch, hold and move                    -> drag the graph
 //   pinch with both hands, move apart/in    -> zoom in/out
 //   open palm (all five fingers), hold 1.2s -> reset the view
+//   point at a bubble and hold still ~1.3s  -> select it (a ring fills up around the cursor)
+//   make a fist over a bubble               -> grab it; move your fist to drag it, open to drop
+//   swipe an open hand fast left or right   -> hide / show the side panels
 const VISION = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11],
@@ -20,6 +23,10 @@ const PINCH_OFF = 0.42;     // ...and to release it (the gap between them stops 
 const CONFIRM_FRAMES = 3;   // a pinch change must hold this many frames
 const DRAG_START_PX = 14;   // move this far while pinched before it counts as a drag
 const LOST_GRACE_MS = 350;  // keep the last state this long if the hand drops out for a moment
+const DWELL_MS = 1300;      // hold still on a bubble this long to select it
+const DWELL_PX = 18;        // ...moving less than this
+const SWIPE_FRAC = 0.33;    // a swipe must cross a third of the screen...
+const SWIPE_MS = 260;       // ...within this time
 
 const btn = document.getElementById("camBtn");
 const video = document.getElementById("cam");
@@ -47,6 +54,8 @@ const state = {
   pos: { x: innerWidth / 2, y: innerHeight / 2 },
   pinching: false, pending: 0, pinchStart: null, dragging: false, lastDrag: null,
   lastSeen: 0, anchor: null, palmSince: 0, zoomPrev: null, zoomFrames: 0,
+  fist: false, fistPending: 0, dwellNode: null, dwellStart: 0, dwellAt: null, dwellDone: null,
+  trail: [], swipeUntil: 0,
 };
 
 const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
@@ -57,6 +66,10 @@ const pinchRatio = (h) => d3(h[THUMB], h[INDEX]) / handSize(h);
 const toScreen = (p) => [Math.min(1, Math.max(0, (1 - p.x - 0.15) / 0.7)) * innerWidth,
   Math.min(1, Math.max(0, (p.y - 0.15) / 0.7)) * innerHeight];
 const midpoint = (h) => ({ x: (h[THUMB].x + h[INDEX].x) / 2, y: (h[THUMB].y + h[INDEX].y) / 2 });
+// a finger is curled when its tip is closer to the wrist than its middle joint is
+function fistClosed(h) {
+  return [[8, 6], [12, 10], [16, 14], [20, 18]].every(([t, p]) => d3(h[t], h[0]) < d3(h[p], h[0]));
+}
 function allFingersOpen(h) {
   const tipsUp = [[8, 6], [12, 10], [16, 14], [20, 18]].every(([t, p]) => h[t].y < h[p].y);
   return tipsUp && d3(h[THUMB], h[17]) > handSize(h) * 1.1;
@@ -106,8 +119,10 @@ btn.addEventListener("click", () => (running ? stop() : start()));
 
 function releaseAll() {
   fx.reset(); fy.reset(); fpinch.reset();
-  Object.assign(state, { pinching: false, pending: 0, pinchStart: null, dragging: false, lastDrag: null, anchor: null, zoomPrev: null, zoomFrames: 0 });
-  cursor.classList.remove("pinch");
+  if (state.fist) window.HUD.drop();
+  Object.assign(state, { pinching: false, pending: 0, pinchStart: null, dragging: false, lastDrag: null, anchor: null, zoomPrev: null, zoomFrames: 0,
+    fist: false, fistPending: 0, dwellNode: null, dwellAt: null, trail: [] });
+  cursor.classList.remove("pinch", "grab"); cursor.style.setProperty("--dwellOn", 0);
 }
 
 function drawHands(hands, primary, ratio) {
@@ -170,6 +185,23 @@ function tick(now) {
   else { fx.filter(rx, now); fy.filter(ry, now); }  // keep the filter warm, but freeze the cursor while deciding click vs drag
   cursor.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
 
+  // ---- fist: grab and drag a single bubble (checked first, so a closing fist never counts as a pinch)
+  const fistNow = fistClosed(h);
+  state.fistPending = fistNow === state.fist ? 0 : state.fistPending + 1;
+  if (state.fistPending >= CONFIRM_FRAMES) {
+    state.fistPending = 0; state.fist = fistNow;
+    if (fistNow) {
+      Object.assign(state, { pinching: false, pending: 0, dragging: false, lastDrag: null, pinchStart: null });
+      window.HUD.grab(pos.x, pos.y);
+    } else window.HUD.drop();
+  }
+  cursor.classList.toggle("grab", state.fist);
+  if (state.fist || (fistNow && state.fistPending)) {
+    if (state.fist) window.HUD.dragTo(pos.x, pos.y);
+    cursor.style.setProperty("--dwellOn", 0); state.dwellNode = null;
+    return requestAnimationFrame(tick);
+  }
+
   const want = state.pinching ? ratio < PINCH_OFF : ratio < PINCH_ON;
   state.pending = want === state.pinching ? 0 : state.pending + 1;
   if (state.pending >= CONFIRM_FRAMES) {
@@ -191,10 +223,28 @@ function tick(now) {
       state.lastDrag = { x: pos.x, y: pos.y };
     }
   } else {
-    window.HUD.hover(pos.x, pos.y);
+    // ---- dwell: point at a bubble and hold still to select it (not with an open palm, that's reset)
+    const n = window.HUD.hover(pos.x, pos.y);
+    if (n && !allFingersOpen(h) && n === state.dwellNode && Math.hypot(pos.x - state.dwellAt.x, pos.y - state.dwellAt.y) < DWELL_PX) {
+      const p = (now - state.dwellStart) / DWELL_MS;
+      if (p >= 1 && state.dwellDone !== n) { window.HUD.pick(pos.x, pos.y); state.dwellDone = n; }
+      cursor.style.setProperty("--dwell", Math.min(1, p)); cursor.style.setProperty("--dwellOn", state.dwellDone === n ? 0 : 1);
+    } else {
+      state.dwellNode = n; state.dwellStart = now; state.dwellAt = { x: pos.x, y: pos.y };
+      if (n !== state.dwellDone) state.dwellDone = null;
+      cursor.style.setProperty("--dwellOn", 0);
+    }
+  }
+  if (state.pinching) cursor.style.setProperty("--dwellOn", 0);
+
+  // ---- swipe: fast sideways move of an open hand toggles the side panels
+  const open = allFingersOpen(h);
+  state.trail = open ? state.trail.filter((p) => now - p.t < SWIPE_MS).concat({ t: now, x: rx }) : [];
+  if (open && now > state.swipeUntil && state.trail.length > 2 && Math.abs(rx - state.trail[0].x) > innerWidth * SWIPE_FRAC) {
+    window.HUD.togglePanels(); state.swipeUntil = now + 1000; state.trail = []; state.palmSince = 0;
   }
 
-  if (allFingersOpen(h) && !state.pinching) {
+  if (open && !state.pinching && now > state.swipeUntil) {
     state.palmSince = state.palmSince || now;
     if (now - state.palmSince > 1200) { window.HUD.reset(); state.palmSince = 0; }
   } else state.palmSince = 0;

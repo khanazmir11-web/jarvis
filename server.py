@@ -24,6 +24,22 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
+
+
+def load_env(path):
+    """Read KEY=value lines from .env (kept out of git) into the environment, without overriding real env vars."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            if k.strip() and k.strip() != "ANTHROPIC_API_KEY":
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+load_env(ROOT / ".env")
 VAULT = Path(os.environ.get("JARVIS_VAULT", ROOT / "vault"))
 WEB = ROOT / "web"
 CONFIG = ROOT / "config"
@@ -436,6 +452,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.host_ok() or self.headers.get("X-Jarvis-Token") != TOKEN:
             return self.send(403, {"error": "blocked: bad host, origin or token"})
+        path = urlparse(self.path).path
+        if path == "/api/stt":  # raw audio clip, not JSON
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 3_000_000:
+                return self.send(413, {"error": "clip too long"})
+            return self.send(200, stt(self.rfile.read(length), self.headers.get("Content-Type", "")))
         length = min(int(self.headers.get("Content-Length") or 0), 64_000)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -452,6 +474,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, refresh_accounts())
         if path == "/api/briefing":
             return self.send(200, briefing(force=bool(body.get("force"))))
+        if path == "/api/tts":
+            audio = tts(str(body.get("text", "")))
+            return self.send(200, audio, "audio/mpeg") if audio else self.send(204, b"", "text/plain")
         if path == "/api/watch":
             return self.send(200, watch_pass(int(body.get("minutes", 1440))))
         self.send(404, {"error": "not found"})
@@ -634,6 +659,83 @@ def watch_pass(mins=60):
                 f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **item, "flags": flags}) + "\n")
     audit("watch", tools=tools, flags=flags, alerts=len(found))
     return {"alerts": found}
+
+
+# ---------------------------------------------------------------- JARVIS voice (Fish Audio)
+FISH = os.environ.get("FISH_AUDIO_BASE", "https://api.fish.audio")
+
+
+def fish_voice():
+    """Voice id from FISH_AUDIO_VOICE_ID, or the most popular public voice called "jarvis" (looked up once)."""
+    vid = os.environ.get("FISH_AUDIO_VOICE_ID", "").strip()
+    if vid:
+        return vid
+    cached = load_json(LOGS / "fish_voice.json", {})
+    if cached.get("id"):
+        return cached["id"]
+    import urllib.request
+    req = urllib.request.Request(f"{FISH}/model?title=jarvis&page_size=20",
+                                 headers={"Authorization": "Bearer " + os.environ["FISH_AUDIO_API_KEY"]})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        items = json.loads(r.read().decode("utf-8")).get("items", [])
+    items = [i for i in items if "jarvis" in i.get("title", "").lower()] or items
+    if not items:
+        return ""
+    best = max(items, key=lambda i: i.get("like_count", 0) + i.get("task_count", 0) / 100)
+    (LOGS / "fish_voice.json").write_text(json.dumps({"id": best["_id"], "title": best.get("title")}), encoding="utf-8")
+    audit("fish_voice_picked", title=best.get("title"))
+    return best["_id"]
+
+
+def tts(text):
+    """Returns MP3 bytes, or None so the browser falls back to its own voice."""
+    if not os.environ.get("FISH_AUDIO_API_KEY"):
+        return None
+    import urllib.request
+    try:
+        body = {"text": re.sub(r"[`*_#>]", "", text)[:900], "format": "mp3", "mp3_bitrate": 128,
+                "prosody": {"speed": 1.05}}
+        vid = fish_voice()
+        if vid:
+            body["reference_id"] = vid
+        req = urllib.request.Request(f"{FISH}/v1/tts", data=json.dumps(body).encode(), method="POST", headers={
+            "Authorization": "Bearer " + os.environ["FISH_AUDIO_API_KEY"], "Content-Type": "application/json",
+            "model": os.environ.get("FISH_AUDIO_MODEL", "s2.1-pro-free")})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+    except (OSError, ValueError, KeyError) as e:
+        audit("tts_error", error=str(e)[:200])
+        return None
+
+
+# ---------------------------------------------------------------- private listening (speech to text on this PC)
+_WHISPER = {"model": None, "lock": threading.Lock()}
+
+
+def stt(audio, ctype):
+    """Transcribe one short clip locally with faster-whisper. Audio never leaves this PC."""
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        return {"error": "not installed yet. In PowerShell run:  python -m pip install faster-whisper  then restart JARVIS."}
+    import tempfile
+    with _WHISPER["lock"]:
+        if _WHISPER["model"] is None:  # first use downloads the model once (~150 MB), then it works offline
+            _WHISPER["model"] = WhisperModel(os.environ.get("JARVIS_WHISPER_MODEL", "base.en"), device="cpu", compute_type="int8")
+    suffix = ".ogg" if "ogg" in ctype else ".mp4" if "mp4" in ctype else ".webm"
+    fd, tmp = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(audio)
+        segs, _ = _WHISPER["model"].transcribe(tmp, language="en", beam_size=1, vad_filter=True)
+        return {"text": " ".join(s.text.strip() for s in segs).strip()}
+    except Exception as e:  # a broken clip must never take JARVIS down
+        return {"error": f"could not transcribe: {str(e)[:120]}"}
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------- live threat feed

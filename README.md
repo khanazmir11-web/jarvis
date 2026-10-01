@@ -33,14 +33,25 @@ This uses Meta's official WhatsApp Business Cloud API. Unofficial "link your per
 
 Privacy: every webhook must carry Meta's signature made with your App Secret, and only your number gets an answer. Messages from anyone else are silently ignored and logged as a warning. From your phone, send `pending`, `approve <id>` or `reject <id>` to handle proposals.
 
-## Connect accounts (phase 2)
+## Connect accounts
 
-1. In Claude Code, connect Gmail, Google Drive and Google Calendar (claude.ai Settings > Connectors, or `/mcp`).
-2. Run `claude mcp list` and note the tool names, for example `mcp__claude_ai_Gmail__search_threads`.
-3. Put the read tools in `read_tools` and the sending/changing tools in `write_tools` in `config/accounts.json`.
-4. Press **⟳ Accounts** in the HUD. Connected accounts turn green.
+1. On claude.ai go to Settings > Connectors and connect Gmail, Google Calendar and Google Drive.
+2. In JARVIS press **⟳ Accounts**. It asks Claude Code which tools are really connected on this PC, allows the read-only ones in chat, and keeps every tool that sends, changes or deletes behind your Approve button. The result is saved in `logs/accounts_state.json` (not in git).
 
-YouTube, Classroom and TikTok need an MCP server that uses your own developer app (planned for phase 2). Play Store and PlayStation Store have no API for your purchases, so they stay grey.
+## What runs by itself
+
+- **Morning briefing**: the first time you open JARVIS each day (after 5am) it reads your calendar and email and talks you through the day. Press ☀ Brief any time.
+- **Background watch**: every hour (`JARVIS_WATCH_MINUTES`, 0 = off) it checks your accounts read-only and lists findings in Alerts. Phishing is marked red and the account bubble pulses.
+- **Live threat feed**: once a day it pulls the newest actively exploited vulnerabilities from CISA's public list and shows them as pulsing red bubbles under Cyber Security.
+
+## Voice
+
+- **JARVIS voice**: put a free Fish Audio key in `.env` as `FISH_AUDIO_API_KEY`. Without it, the browser voice is used.
+- **"Hey Jarvis"**: click 👂 to cycle between the browser's speech service, 🔒 private mode, and off. Private mode turns speech into text on your PC with faster-whisper (`python -m pip install faster-whisper`, the first use downloads a ~150 MB model).
+
+## Desktop icon and start with Windows
+
+Double-click `install-shortcuts.bat` once.
 
 ## How it looks and talks
 

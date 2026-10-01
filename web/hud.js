@@ -13,6 +13,31 @@
   const view = { x: 0, y: 0, k: 1 };
   let target = null, baseK = 1, energy = 0, talking = 0;
   const BIG = ["core", "hub"];
+  // ---- themes: the accent colour of the core, default lines and panels
+  const THEMES = { jarvis: { accent: "#27d3ff", hot: "#e6fbff" }, ironman: { accent: "#ff4433", hot: "#ffd36b" }, stealth: { accent: "#dfe8ee", hot: "#ffffff" } };
+  let theme = "jarvis";
+  try { theme = THEMES[localStorage.getItem("jarvis.theme")] ? localStorage.getItem("jarvis.theme") : "jarvis"; } catch {}
+  function applyTheme(name) {
+    theme = name; document.body.dataset.theme = name; TYPES.core = THEMES[name].accent;
+    try { localStorage.setItem("jarvis.theme", name); } catch {}
+  }
+  applyTheme(theme);
+  // ---- live sound level (your mic while listening, JARVIS's voice while speaking) drives the voice ring
+  let audioCtx = null, bins = null;
+  const analysers = [];
+  function ensureAudio() { if (!audioCtx) { try { audioCtx = new AudioContext(); } catch { return null; } } audioCtx.resume(); return audioCtx; }
+  function addAnalyser(node) { const a = audioCtx.createAnalyser(); a.fftSize = 256; a.smoothingTimeConstant = 0.75; node.connect(a); analysers.push(a); return a; }
+  async function listenMicLevel() {
+    if (!ensureAudio() || !navigator.mediaDevices) return;
+    try { const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); addAnalyser(audioCtx.createMediaStreamSource(st)); } catch {}
+  }
+  function soundBins() {
+    if (!analysers.length) return null;
+    const n = analysers[0].frequencyBinCount; bins = bins || new Float32Array(n); bins.fill(0);
+    const tmp = new Uint8Array(n);
+    analysers.forEach((a) => { a.getByteFrequencyData(tmp); for (let i = 0; i < n; i++) bins[i] = Math.max(bins[i], tmp[i] / 255); });
+    return bins;
+  }
   // each main brain gets its own colour so the overview reads at a glance
   const HUB_COLORS = { "hub:security": "#ff5d6c", "hub:memory": "#b58cff", "grp:Google": "#27d3ff", "grp:E-learning": "#5ca8ff",
     "grp:Social": "#ff6fd8", "grp:Stores": "#ffb547", "grp:Infra": "#3ef2a0" };
@@ -133,12 +158,32 @@
       const a0 = -t / 1800 + k * (Math.PI * 2 / 3);
       ctx.beginPath(); ctx.arc(x, y, r * 0.9, a0, a0 + 1.3); ctx.stroke();
     }
-    // hexagon + inner glow
-    ctx.lineWidth = 1.5 * d; ctx.beginPath();
-    for (let k = 0; k <= 6; k++) { const a = k * Math.PI / 3 + t / 4000; ctx[k ? "lineTo" : "moveTo"](x + Math.cos(a) * r * 0.62, y + Math.sin(a) * r * 0.62); }
-    ctx.stroke();
+    // voice ring: a waveform circle that moves with real sound (mic while listening, JARVIS's voice while talking)
+    const fb = soundBins();
+    if (fb) {
+      const N = 96, R0 = r * 1.98; ctx.globalAlpha = 0.85; ctx.lineWidth = 1.6 * d; ctx.shadowBlur = 12 * d; ctx.beginPath();
+      for (let k = 0; k <= N; k++) {
+        const v = fb[Math.floor(((k % N) < N / 2 ? (k % N) : N - (k % N)) / (N / 2) * fb.length * 0.6)] || 0;
+        const a = (k / N) * Math.PI * 2 - Math.PI / 2, rr = R0 + v * r * 0.55;
+        ctx[k ? "lineTo" : "moveTo"](x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+      }
+      ctx.stroke(); ctx.shadowBlur = 8 * d;
+    }
+    // rotating wireframe globe in place of the old hexagon
+    const G = r * 0.66, spin = t / 5000;
+    ctx.lineWidth = 1 * d; ctx.globalAlpha = 0.55;
+    ctx.beginPath(); ctx.arc(x, y, G, 0, Math.PI * 2); ctx.stroke();
+    for (let k = 0; k < 6; k++) {          // meridians: ellipses whose width follows the rotation
+      const ph = spin + k * Math.PI / 6, w = Math.abs(Math.cos(ph)) * G;
+      ctx.globalAlpha = 0.18 + 0.4 * Math.abs(Math.sin(ph)); ctx.beginPath(); ctx.ellipse(x, y, w, G, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 0.35;
+    for (let k = -2; k <= 2; k++) {        // parallels
+      const yy = y + (k / 3) * G, ww = Math.sqrt(Math.max(0, G * G - (k / 3 * G) ** 2));
+      ctx.beginPath(); ctx.ellipse(x, yy, ww, ww * 0.18, 0, 0, Math.PI * 2); ctx.stroke();
+    }
     const g = ctx.createRadialGradient(x, y, 0, x, y, r * 0.55);
-    g.addColorStop(0, "rgba(220,250,255,.95)"); g.addColorStop(0.5, color); g.addColorStop(1, "rgba(39,211,255,0)");
+    g.addColorStop(0, "rgba(220,250,255,.95)"); g.addColorStop(0.5, color); g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.globalAlpha = 0.8 + 0.2 * e; ctx.fillStyle = g; ctx.shadowBlur = (20 + 30 * e) * d;
     ctx.beginPath(); ctx.arc(x, y, r * (0.5 + 0.08 * e * Math.sin(t / 70)), 0, Math.PI * 2); ctx.fill();
     ctx.restore();
@@ -158,7 +203,7 @@
   }
 
   // tinted line colour for an edge: the hub's own colour, so each branch has its own hue
-  const edgeColor = (a, b) => (a.type === "hub" ? hubColor(a) : b.type === "hub" ? hubColor(b) : a.hubC || b.hubC || "#27d3ff");
+  const edgeColor = (a, b) => (a.type === "hub" ? hubColor(a) : b.type === "hub" ? hubColor(b) : a.hubC || b.hubC || THEMES[theme].accent);
   const rgba = (hex, al) => { const v = parseInt(hex.slice(1), 16); return `rgba(${v >> 16},${(v >> 8) & 255},${v & 255},${al})`; };
 
   function hexPath(x, y, r, rot) {
@@ -343,6 +388,11 @@
     pick: (cx, cy) => { const n = nodeAt(cx, cy); if (n) select(n); return n; },
     panBy: (dx, dy) => { userMoved = true; target = null; view.x += dx * devicePixelRatio; view.y += dy * devicePixelRatio; },
     positions: () => nodes.map((n) => [n.x, n.y]),
+    // fist gesture: grab one bubble and move it
+    grab: (cx, cy) => { const n = nodeAt(cx, cy); if (n && n.type !== "core") { dragging = n; heat = Math.max(heat, 0.3); select(n); } return n; },
+    dragTo: (cx, cy) => { if (!dragging) return; const [wx, wy] = toWorld(cx * devicePixelRatio, cy * devicePixelRatio); dragging.x = wx; dragging.y = wy; heat = Math.max(heat, 0.3); },
+    drop: () => { dragging = null; },
+    togglePanels: () => document.body.classList.toggle("hide-panels"),
     zoomBy, reset, talk: (on) => { talking = Math.max(0, talking + (on ? 1 : -1)); }, setMode: (m) => { $("mode").textContent = m; },
   };
 
@@ -466,9 +516,29 @@
   });
 
   // voice (browser built-ins; Fish Audio voice is a later phase)
-  function speak(text) {
-    if (!window.speechSynthesis || !text || !voiceOn) return;
-    speechSynthesis.cancel();
+  // JARVIS's own voice through Fish Audio when a key is set in .env, otherwise the browser's voice
+  let voiceAudio = null;
+  async function speak(text) {
+    if (!text || !voiceOn) return;
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    if (voiceAudio) { voiceAudio.pause(); voiceAudio = null; }
+    try {
+      const r = await api("/api/tts", { text: text.slice(0, 900) });
+      if (r.status === 200) {
+        const url = URL.createObjectURL(await r.blob()), a = new Audio(url); voiceAudio = a;
+        let on = false, an = null;
+        if (audioCtx && audioCtx.state === "running") {  // route through an analyser so the voice ring moves with JARVIS's voice
+          const src = audioCtx.createMediaElementSource(a); src.connect(audioCtx.destination); an = addAnalyser(src);
+        }
+        a.onplay = () => { if (!on) { on = true; window.HUD.talk(true); } };
+        a.onended = a.onerror = a.onpause = () => { if (on) { on = false; window.HUD.talk(false); } URL.revokeObjectURL(url); if (voiceAudio === a) voiceAudio = null; if (an) { analysers.splice(analysers.indexOf(an) >>> 0, 1); an = null; } idleMode(); };
+        await a.play(); return;
+      }
+    } catch {}
+    browserSpeak(text);
+  }
+  function browserSpeak(text) {
+    if (!window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(text.slice(0, 600)); let on = false;
     const voices = speechSynthesis.getVoices();
     u.voice = voices.find((v) => /en-GB/.test(v.lang) && /male|daniel|george|arthur/i.test(v.name)) || voices.find((v) => /en-GB/.test(v.lang)) || null;
@@ -480,7 +550,7 @@
   let voiceOn = true;
   $("voiceBtn").onclick = () => {
     voiceOn = !voiceOn; $("voiceBtn").textContent = voiceOn ? "🔊 Voice" : "🔇 Voice";
-    if (!voiceOn && window.speechSynthesis) speechSynthesis.cancel();
+    if (!voiceOn) { if (window.speechSynthesis) speechSynthesis.cancel(); if (voiceAudio) voiceAudio.pause(); }
   };
   // ---------------------------------------------------------------- "Hey Jarvis" wake word
   // Always-on listening in the browser. Say "Hey Jarvis" then your question, in one go
@@ -489,9 +559,11 @@
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const WAKE = /\b(?:hey|hi|ok|okay|yo)[\s,]+(?:jarvis|jervis|travis|service)\b[\s,.!?]*/i;
   const AWAKE_MS = 10000;   // how long it waits for your question after "Hey Jarvis"
-  let wakeOn = false, rec = null, awakeUntil = 0, awakeGlow = false, restartDelay = 300, chimeCtx = null;
-  try { wakeOn = localStorage.getItem("jarvis.wake") !== "off"; } catch {}
-  const busy = () => document.querySelector(".dial").classList.contains("busy") || (window.speechSynthesis && speechSynthesis.speaking);
+  // wake modes: "on" = browser speech service, "private" = speech turned into text on this PC (whisper), "off"
+  let wakeMode = "on", rec = null, awakeUntil = 0, awakeGlow = false, restartDelay = 300, chimeCtx = null;
+  try { wakeMode = { off: "off", private: "private" }[localStorage.getItem("jarvis.wake")] || "on"; } catch {}
+  let wakeOn = wakeMode !== "off";
+  const busy = () => document.querySelector(".dial").classList.contains("busy") || (window.speechSynthesis && speechSynthesis.speaking) || (voiceAudio && !voiceAudio.paused);
   const idleMode = () => { if (!busy() && !awakeGlow) $("mode").textContent = wakeOn ? "EARS ON" : "STANDBY"; };
 
   function chime() {  // short rising beep so you hear that it woke up
@@ -526,7 +598,63 @@
   }
   const afterWake = (t) => { const m = t.match(WAKE); return m ? t.slice(m.index + m[0].length).trim() : null; };
 
+  // one heard phrase (final): wake word + question, wake word alone, or the question after waking
+  function heardFinal(heard) {
+    const rest = afterWake(heard);
+    if (rest !== null) rest.length > 2 ? ask(rest) : wakeUp();
+    else if (awakeGlow && heard.length > 2) ask(heard);
+  }
+
+  // ---- private listening: cut speech into clips with a simple loudness detector and transcribe them on this PC
+  const JUNK = /^(you|thank you\.?|thanks for watching!?|\.+|bye\.?)$/i;
+  let priv = null;
+  async function startPrivate() {
+    if (priv || wakeMode !== "private") return;
+    if (!ensureAudio()) return;
+    let st;
+    try { st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch { setWake("off"); say("jarvis", "The microphone is blocked. Allow it in the address bar, then press 👂."); return; }
+    const an = addAnalyser(audioCtx.createMediaStreamSource(st)), buf = new Float32Array(an.fftSize);
+    priv = { st, an, rec: null, chunks: [], loudAt: 0, startAt: 0, timer: null };
+    let noise = 0.01;
+    priv.timer = setInterval(() => {
+      if (!priv) return;
+      an.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      const rms = Math.sqrt(sum / buf.length), now = performance.now(), loud = rms > Math.max(0.02, noise * 3);
+      if (!loud && !priv.rec) noise = noise * 0.98 + rms * 0.02;   // learn the room's background level
+      if (loud && !busy()) priv.loudAt = now;
+      if (loud && !priv.rec && !busy()) {
+        priv.chunks = []; priv.startAt = now;
+        priv.rec = new MediaRecorder(st); priv.rec.ondataavailable = (e) => priv && priv.chunks.push(e.data);
+        priv.rec.onstop = () => sendClip(priv ? priv.chunks : [], now);
+        priv.rec.start(); if (awakeGlow) awakeUntil = Date.now() + AWAKE_MS;
+      } else if (priv.rec && (now - priv.loudAt > 800 || now - priv.startAt > 12000)) {
+        const r = priv.rec; priv.rec = null; const dur = now - priv.startAt;
+        r.onstop = dur > 900 ? () => sendClip(priv ? priv.chunks : [], dur) : null; r.stop();
+      }
+    }, 50);
+  }
+  async function sendClip(chunks) {
+    if (!chunks.length) return;
+    const blob = new Blob(chunks, { type: chunks[0].type || "audio/webm" });
+    try {
+      const r = await fetch("/api/stt", { method: "POST", headers: { "X-Jarvis-Token": window.JARVIS_TOKEN, "Content-Type": blob.type }, body: blob });
+      const j = await r.json();
+      if (j.error) { say("jarvis", "⚠ Private listening: " + j.error); setWake("on"); return; }
+      const text = (j.text || "").trim();
+      if (text && !JUNK.test(text) && !busy()) heardFinal(text);
+    } catch {}
+  }
+  function stopPrivate() {
+    if (!priv) return;
+    clearInterval(priv.timer); if (priv.rec) { priv.rec.onstop = null; priv.rec.stop(); }
+    priv.st.getTracks().forEach((t) => t.stop());
+    analysers.splice(analysers.indexOf(priv.an) >>> 0, 1); priv = null;
+  }
+
   function startWake() {
+    if (wakeMode === "private") return startPrivate();
     if (!SR || !wakeOn || rec) return;
     rec = new SR(); rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
     rec.onresult = (e) => {
@@ -540,32 +668,37 @@
           if (awakeGlow) { awakeUntil = Date.now() + AWAKE_MS; $("msg").value = rest !== null ? rest : heard; }
           continue;
         }
-        if (rest !== null) rest.length > 2 ? ask(rest) : wakeUp();
-        else if (awakeGlow && heard.length > 2) ask(heard);
+        heardFinal(heard);
       }
     };
     rec.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        setWake(false); say("jarvis", "I'd love to listen, but the microphone is blocked. Allow it in the address bar, then press 👂.");
+        setWake("off"); say("jarvis", "I'd love to listen, but the microphone is blocked. Allow it in the address bar, then press 👂.");
       } else if (e.error === "network") restartDelay = Math.min(10000, restartDelay * 2);
     };
     rec.onstart = () => { restartDelay = 300; idleMode(); };
     rec.onend = () => { rec = null; if (wakeOn) setTimeout(startWake, restartDelay); };  // Chrome stops every minute or so; just restart
     try { rec.start(); } catch { rec = null; }
   }
-  function setWake(on) {
-    wakeOn = on; try { localStorage.setItem("jarvis.wake", on ? "on" : "off"); } catch {}
-    $("wakeBtn").textContent = on ? "👂 Hey Jarvis" : "👂 Off"; $("wakeBtn").classList.toggle("on", on);
-    if (on) startWake(); else { sleep(); if (rec) { const r = rec; rec = null; r.onend = null; r.abort(); } }
+  function setWake(mode) {
+    wakeMode = mode; wakeOn = mode !== "off"; try { localStorage.setItem("jarvis.wake", mode); } catch {}
+    $("wakeBtn").textContent = { on: "👂 Hey Jarvis", private: "🔒 Hey Jarvis", off: "👂 Off" }[mode];
+    $("wakeBtn").title = { on: "Listening with the browser's speech service. Click for private mode.", private: "Private: speech is turned into text on this PC. Click to turn off.", off: "Not listening. Click to turn on." }[mode];
+    $("wakeBtn").classList.toggle("on", wakeOn);
+    if (rec) { const r = rec; rec = null; r.onend = null; r.abort(); }
+    if (mode !== "private") stopPrivate();
+    if (wakeOn) { startWake(); if (!analysers.length) listenMicLevel(); } else sleep();
     idleMode();
   }
-  if (!SR) $("wakeBtn").hidden = true;
-  else { $("wakeBtn").onclick = () => setWake(!wakeOn); setWake(wakeOn); }
+  const NEXT = SR ? { on: "private", private: "off", off: "on" } : { private: "off", off: "private", on: "private" };
+  if (!SR && wakeMode === "on") wakeMode = "private";
+  $("wakeBtn").onclick = () => { ensureAudio(); setWake(NEXT[wakeMode]); };
+  setWake(wakeMode);
 
   // 🎙 button: talk without saying the wake word
   $("micBtn").onclick = () => {
     if (!SR) { say("jarvis", "This browser has no speech recognition. Try Chrome or Edge."); return; }
-    if (rec) { wakeUp(); return; }  // the always-on listener is already running, just open the window
+    if (rec || priv) { wakeUp(); return; }  // the always-on listener is already running, just open the window
     const r = new SR(); r.lang = "en-US"; $("mode").textContent = "LISTENING"; let heard = false;
     r.onspeechstart = () => { if (!heard) { heard = true; window.HUD.talk(true); } };
     r.onspeechend = () => { if (heard) { heard = false; window.HUD.talk(false); } };
@@ -597,6 +730,8 @@
     } catch (e) { out.textContent = "⚠ " + e; document.querySelector(".dial").classList.remove("busy"); idleMode(); }
   }
   $("briefBtn").onclick = () => runBriefing(true);
+  $("themeBtn").onclick = () => { const k = Object.keys(THEMES); applyTheme(k[(k.indexOf(theme) + 1) % k.length]); };
+  addEventListener("pointerdown", () => audioCtx && audioCtx.resume(), { once: true });
   async function autoBriefing() {
     // once a day, the first time you open JARVIS after 5am, if any account is connected
     const b = await (await api("/api/briefing")).json();

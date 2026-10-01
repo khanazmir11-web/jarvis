@@ -28,6 +28,7 @@
   </div>
   <nav id="filters"></nav>
   <div class="top-actions">
+    <button id="themeBtn" title="Switch theme: JARVIS / Iron Man / Stealth">🎨</button>
     <button id="briefBtn" title="Morning briefing">☀ Brief</button>
     <button id="wakeBtn" title="Always listening for “Hey Jarvis”">👂 Hey Jarvis</button>
     <button id="voiceBtn" title="JARVIS speaks replies">🔊 Voice</button>
@@ -59,7 +60,7 @@
 
 <video id="cam" playsinline muted hidden></video>
 <canvas id="handLayer" hidden></canvas>
-<div id="gestureHint" hidden>☝ point · 🤏 pinch = select · pinch-drag = move · ✋ hold = reset · 🤏🤏 two hands = zoom</div>
+<div id="gestureHint" hidden>☝ point + hold = select · 🤏 pinch = select · pinch-drag = move · ✊ fist = grab a bubble · 👋 swipe = panels · ✋ hold = reset · 🤏🤏 = zoom</div>
 
 <script src="/web/hud.js"></script>
 <script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");</script>
