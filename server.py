@@ -567,6 +567,8 @@ def refresh_accounts():
         return {"error": f"could not start Claude Code: {e}"}
     if tools is None:
         return {"error": "Claude Code did not report its tools. Is it signed in?"}
+    if not any(t.startswith("mcp__") for t in tools) and not servers:
+        return {"error": "Claude Code on this PC sees no connectors. If chat says 'Not logged in', sign Claude Code in first (see the steps in the chat with Claude), then press ⟳ Accounts again."}
     changed, found, state = [], {}, {}
     for acc in accounts():
         if acc["status"] == "unsupported" or not acc.get("match"):
@@ -627,7 +629,8 @@ def briefing(force=False):
     flags = scan(text)
     text = BLOCK.sub("", text).strip()
     out = {"date": today, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "text": text, "flags": flags}
-    (LOGS / "briefing.json").write_text(json.dumps(out), encoding="utf-8")
+    if "/login" not in text and not text.startswith("JARVIS could not reach"):  # don't keep a failed briefing for the whole day
+        (LOGS / "briefing.json").write_text(json.dumps(out), encoding="utf-8")
     audit("briefing", tools=tools, flags=flags)
     return out
 
