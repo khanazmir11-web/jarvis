@@ -11,6 +11,15 @@
   const view = { x: 0, y: 0, k: 1 };
   let target = null, baseK = 1, energy = 0, talking = 0;
   const BIG = ["core", "hub"];
+  // each main brain gets its own colour so the overview reads at a glance
+  const HUB_COLORS = { "hub:security": "#ff5d6c", "hub:memory": "#b58cff", "grp:Google": "#27d3ff", "grp:E-learning": "#5ca8ff",
+    "grp:Social": "#ff6fd8", "grp:Stores": "#ffb547", "grp:Infra": "#3ef2a0" };
+  const SPARE = ["#7cf7ff", "#c3ff6b", "#ff9b5c", "#9f9bff"];
+  const hubColor = (n) => HUB_COLORS[n.id] || SPARE[[...n.id].reduce((a, c) => a + c.charCodeAt(0), 0) % SPARE.length];
+  const bootStart = performance.now();
+  const boot = () => Math.min(1, (performance.now() - bootStart) / 1800);   // 0 -> 1 during the start-up animation
+  const ease = (x) => 1 - Math.pow(1 - x, 3);
+  const dust = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), z: 0.3 + Math.random() * 0.7, p: Math.random() * 6.28 }));
   // small circles fade in as you zoom in past the overview
   const reveal = () => Math.max(0, Math.min(1, (view.k / baseK - 0.75) / 0.35));
 
@@ -36,8 +45,11 @@
       byId[n.id] = node; return node;
     });
     edges = g.edges.map(([s, t]) => [byId[s], byId[t]]).filter(([s, t]) => s && t);
+    edges.forEach(([a, b]) => { if (a.type === "hub" && b.type !== "core") b.hubC = hubColor(a); if (b.type === "hub" && a.type !== "core") a.hubC = hubColor(b); });
     const deg = {}; edges.forEach(([s, t]) => { deg[s.id] = (deg[s.id] || 0) + 1; deg[t.id] = (deg[t.id] || 0) + 1; });
     nodes.forEach((n) => { if (!["core", "hub", "account"].includes(n.type)) n.r = 5 + Math.min(8, (deg[n.id] || 0)); });
+    nodes.forEach((n) => { n.kids = n.type === "hub" ? edges.filter(([a, b]) => (a === n || b === n) && a.type !== "core" && b.type !== "core").length : 0; });
+    updateStats();
     heat = 1; buildFilters();
   }
 
@@ -84,7 +96,17 @@
 
   function drawCore(x, y, r, t, color) {
     const d = devicePixelRatio, e = energy;
-    ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.shadowColor = color;
+    r *= 0.2 + 0.8 * ease(boot());
+    ctx.save(); ctx.strokeStyle = color;
+    // outer orbit with three satellites
+    ctx.globalAlpha = 0.25; ctx.lineWidth = 1 * d; ctx.setLineDash([2 * d, 6 * d]);
+    ctx.beginPath(); ctx.arc(x, y, r * 2.75, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    for (let k = 0; k < 3; k++) {
+      const a = t / (2600 + k * 900) + k * 2.1, sx = x + Math.cos(a) * r * 2.75, sy = y + Math.sin(a) * r * 2.75;
+      ctx.globalAlpha = 0.9; ctx.shadowColor = color; ctx.shadowBlur = 12 * d;
+      ctx.beginPath(); ctx.arc(sx, sy, 2.6 * d, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.shadowBlur = 0; ctx.fillStyle = color; ctx.shadowColor = color;
     // radial lines going out of the core; they stretch and flicker while someone speaks
     const spokes = 48;
     for (let i = 0; i < spokes; i++) {
@@ -120,20 +142,71 @@
     ctx.restore();
   }
 
+  function drawBackdrop(t) {
+    const d = devicePixelRatio;
+    // drifting dust, with a little parallax when you pan
+    ctx.fillStyle = "#9fe8ff";
+    dust.forEach((p) => {
+      const x = ((p.x * W + view.x * 0.08 * p.z + t * 0.004 * p.z) % W + W) % W;
+      const y = ((p.y * H + view.y * 0.08 * p.z) % H + H) % H;
+      ctx.globalAlpha = (0.12 + 0.25 * p.z) * (0.6 + 0.4 * Math.sin(t / 900 + p.p)) * (1 + energy);
+      ctx.beginPath(); ctx.arc(x, y, p.z * 1.3 * d, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // tinted line colour for an edge: the hub's own colour, so each branch has its own hue
+  const edgeColor = (a, b) => (a.type === "hub" ? hubColor(a) : b.type === "hub" ? hubColor(b) : a.hubC || b.hubC || "#27d3ff");
+  const rgba = (hex, al) => { const v = parseInt(hex.slice(1), 16); return `rgba(${v >> 16},${(v >> 8) & 255},${v & 255},${al})`; };
+
+  function hexPath(x, y, r, rot) {
+    ctx.beginPath();
+    for (let k = 0; k <= 6; k++) { const a = rot + k * Math.PI / 3; ctx[k ? "lineTo" : "moveTo"](x + Math.cos(a) * r, y + Math.sin(a) * r); }
+  }
+
+  function drawReticle(x, y, r, t, color) {
+    const d = devicePixelRatio, R = r + 10 * d, L = 7 * d;
+    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1.5 * d; ctx.shadowColor = color; ctx.shadowBlur = 10 * d;
+    ctx.translate(x, y); ctx.rotate(t / 1400);
+    for (let k = 0; k < 4; k++) {
+      ctx.rotate(Math.PI / 2); ctx.beginPath();
+      ctx.moveTo(R - L, -R); ctx.lineTo(R, -R); ctx.lineTo(R, -R + L); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function draw(t) {
     ctx.clearRect(0, 0, W, H);
-    const d = devicePixelRatio, rv = reveal();
-    const alphaOf = (n) => (BIG.includes(n.type) ? 1 : rv);
+    drawBackdrop(t);
+    const d = devicePixelRatio, rv = reveal(), b0 = ease(boot());
+    const alphaOf = (n) => (BIG.includes(n.type) ? b0 : rv * (boot() < 1 ? 0 : 1));
     edges.forEach(([a, b], i) => {
       if (!visible(a) || !visible(b)) return;
       const al = Math.min(alphaOf(a), alphaOf(b)); if (al <= 0.01) return;
       const hot = selected && (a === selected || b === selected);
       const pulse = energy * (0.45 + 0.4 * Math.sin(t / 90 + i * 0.9));
-      ctx.globalAlpha = al; ctx.lineWidth = (1 + 1.6 * energy) * d;
-      ctx.shadowColor = "#27d3ff"; ctx.shadowBlur = energy * 14 * d;
-      ctx.strokeStyle = `rgba(39,211,255,${hot ? 0.75 : 0.14 + pulse})`;
-      const [x1, y1] = toScreen(a), [x2, y2] = toScreen(b);
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      const col = edgeColor(a, b);
+      ctx.globalAlpha = al; ctx.lineWidth = (1 + 1.6 * energy + (hot ? 1 : 0)) * d;
+      ctx.shadowColor = col; ctx.shadowBlur = (energy * 14 + (hot ? 8 : 0)) * d;
+      ctx.strokeStyle = rgba(col, hot ? 0.8 : 0.16 + pulse);
+      let [x1, y1] = toScreen(a), [x2, y2] = toScreen(b);
+      if (a.type === "core" || b.type === "core") {  // spokes grow out of the core during start-up
+        if (b.type === "core") [x1, y1, x2, y2] = [x2, y2, x1, y1];
+        x2 = x1 + (x2 - x1) * b0; y2 = y1 + (y2 - y1) * b0;
+      }
+      // gentle curve so the web looks organic rather than a star of straight lines
+      const mx = (x1 + x2) / 2 - (y2 - y1) * 0.08, my = (y1 + y2) / 2 + (x2 - x1) * 0.08;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(mx, my, x2, y2); ctx.stroke();
+      // data packets travelling along the line (faster and brighter while someone talks)
+      if (al > 0.5 && (a.type === "core" || b.type === "core" || hot || energy > 0.1)) {
+        const n = 1 + Math.round(energy * 2);
+        for (let k = 0; k < n; k++) {
+          const u = ((t / (2400 - 1500 * energy) + i * 0.37 + k / n) % 1), v = 1 - u;
+          const px = v * v * x1 + 2 * v * u * mx + u * u * x2, py = v * v * y1 + 2 * v * u * my + u * u * y2;
+          ctx.globalAlpha = al * Math.sin(u * Math.PI); ctx.fillStyle = "#e6fbff"; ctx.shadowBlur = 10 * d;
+          ctx.beginPath(); ctx.arc(px, py, (1.6 + energy) * d, 0, Math.PI * 2); ctx.fill();
+        }
+      }
     });
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     nodes.forEach((n) => {
@@ -141,25 +214,48 @@
       const al = alphaOf(n); if (al <= 0.01) return;
       const [x, y] = toScreen(n);
       const r = n.type === "core" ? Math.max(n.r * view.k, 58) * d : n.type === "hub" ? Math.max(n.r * view.k, 11) * d : n.r * view.k * d;
-      let color = TYPES[n.type] || "#8aa";
+      let color = n.type === "hub" ? hubColor(n) : TYPES[n.type] || "#8aa";
       if (n.type === "account") color = STATUS[n.status] || color;
       if (n.type === "core") { drawCore(x, y, r, t, color); return; }
       const glow = flash.has(n.id) ? 30 + 10 * Math.sin(t / 120) : n === selected || n === hover ? 24 : 10 + 16 * energy;
       ctx.shadowColor = color; ctx.shadowBlur = glow * d;
       ctx.globalAlpha = al * (n.status === "unsupported" ? 0.45 : 0.9);
       if (n.type === "hub") {
-        ctx.strokeStyle = color; ctx.lineWidth = 2 * d;
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath(); ctx.arc(x, y, r * 1.35, t / 1500, t / 1500 + 2); ctx.stroke();
-        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r * 0.45, 0, Math.PI * 2); ctx.fill();
+        const R = r * 1.25;
+        ctx.globalAlpha = al * 0.12; ctx.fillStyle = color; hexPath(x, y, R, Math.PI / 6); ctx.fill();
+        ctx.globalAlpha = al; ctx.strokeStyle = color; ctx.lineWidth = 1.6 * d; hexPath(x, y, R, Math.PI / 6); ctx.stroke();
+        // segmented ring spinning around the brain, one segment per thing inside it
+        const segs = Math.max(3, Math.min(12, n.kids || 3)), gap = 0.18;
+        ctx.lineWidth = 2.5 * d; ctx.globalAlpha = al * 0.85;
+        for (let k = 0; k < segs; k++) {
+          const a0 = t / 2200 + k * (Math.PI * 2 / segs);
+          ctx.beginPath(); ctx.arc(x, y, R * 1.45, a0, a0 + Math.PI * 2 / segs - gap); ctx.stroke();
+        }
+        ctx.globalAlpha = al; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r * 0.42 * (1 + 0.15 * energy * Math.sin(t / 80)), 0, Math.PI * 2); ctx.fill();
+        if (n.kids) {  // count badge
+          ctx.shadowBlur = 0; ctx.font = `600 ${9 * d}px Orbitron,ui-monospace,monospace`; ctx.textAlign = "center";
+          ctx.fillStyle = "#02070d"; ctx.fillText(n.kids, x, y + 3.2 * d);
+        }
       } else {
         ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
       }
       ctx.shadowBlur = 0;
       if (n.type === "hub" || (n.type === "account" && rv > 0.5) || n === hover || n === selected || view.k > baseK * 1.8) {
-        ctx.fillStyle = "#cfefff"; ctx.font = `${(n.type === "hub" ? 12 : 11) * d}px ui-monospace,monospace`; ctx.textAlign = "center";
-        ctx.fillText(n.label + (n.status === "unsupported" ? " (no API)" : ""), x, y + r * (n.type === "hub" ? 1.35 : 1) + 14 * d);
+        ctx.textAlign = "center";
+        if (n.type === "hub") {
+          const txt = n.label.toUpperCase(), ly = y + r * 1.25 * 1.45 + 18 * d;
+          ctx.font = `600 ${10.5 * d}px Orbitron,ui-monospace,monospace`;
+          const w = ctx.measureText(txt).width + 18 * d;
+          ctx.globalAlpha = al * 0.85; ctx.fillStyle = "rgba(2,10,18,.8)"; ctx.fillRect(x - w / 2, ly - 12 * d, w, 17 * d);
+          ctx.strokeStyle = rgba(color, 0.6); ctx.lineWidth = 1 * d; ctx.strokeRect(x - w / 2, ly - 12 * d, w, 17 * d);
+          ctx.fillStyle = color; ctx.fillRect(x - w / 2, ly - 12 * d, 2 * d, 17 * d);
+          ctx.globalAlpha = al; ctx.fillStyle = "#e6fbff"; ctx.fillText(txt, x, ly);
+        } else {
+          ctx.fillStyle = "#cfefff"; ctx.font = `${11 * d}px Rajdhani,ui-monospace,monospace`;
+          ctx.fillText(n.label + (n.status === "unsupported" ? " (no API)" : ""), x, y + r + 14 * d);
+        }
       }
+      if (n === selected || n === hover) drawReticle(x, y, n.type === "hub" ? r * 1.25 * 1.45 : r, t, color);
       ctx.globalAlpha = 1;
     });
   }
@@ -240,6 +336,21 @@
     positions: () => nodes.map((n) => [n.x, n.y]),
     zoomBy, reset, talk: (on) => { talking = Math.max(0, talking + (on ? 1 : -1)); }, setMode: (m) => { $("mode").textContent = m; },
   };
+
+  // ---------------------------------------------------------------- top-bar readouts
+  function updateStats() {
+    const acc = nodes.filter((n) => n.type === "account");
+    const on = acc.filter((n) => n.status === "connected").length;
+    const notes = nodes.filter((n) => !["core", "hub", "account"].includes(n.type)).length;
+    $("statAcc").textContent = `${on}/${acc.length}`; $("statNotes").textContent = notes;
+    $("statThreats").textContent = nodes.filter((n) => n.type === "threat").length;
+  }
+  function tickClock() {
+    const now = new Date();
+    $("clock").textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+    $("date").textContent = now.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "short" }).toUpperCase();
+  }
+  tickClock(); setInterval(tickClock, 1000);
 
   // ---------------------------------------------------------------- panels
   async function loadSecurity() {

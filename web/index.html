@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>J.A.R.V.I.S.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600&family=Share+Tech+Mono&display=swap">
 <link rel="stylesheet" href="/web/style.css">
 <link rel="manifest" href="/web/manifest.webmanifest">
 <link rel="icon" href="/web/icon.svg">
@@ -11,11 +13,19 @@
 <script>window.JARVIS_TOKEN = "__JARVIS_TOKEN__";</script>
 </head>
 <body>
+<div id="scan"></div>
 <canvas id="graph"></canvas>
+<div id="boot"><div class="boot-title">J.A.R.V.I.S.</div><div class="boot-line">INITIALISING SYSTEMS<span>…</span></div></div>
 <div id="cursor" hidden></div>
 
 <header id="top">
   <div class="dial"><span>J.A.R.V.I.S.</span><small id="mode">STANDBY</small></div>
+  <div id="readout">
+    <div><b id="clock">--:--:--</b><small id="date"></small></div>
+    <div><b id="statAcc">0/0</b><small>ACCOUNTS LIVE</small></div>
+    <div><b id="statNotes">0</b><small>MEMORIES</small></div>
+    <div><b id="statThreats" class="bad">0</b><small>THREATS TRACKED</small></div>
+  </div>
   <nav id="filters"></nav>
   <div class="top-actions">
     <button id="wakeBtn" title="Always listening for “Hey Jarvis”">👂 Hey Jarvis</button>
