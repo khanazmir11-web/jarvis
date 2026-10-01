@@ -4,7 +4,9 @@
     core: "#27d3ff", hub: "#9fe8ff", account: "#3ef2a0", threat: "#ff4d5e", defense: "#ffb547",
     security: "#ff8a5c", memory: "#b58cff", learning: "#5ca8ff", ghost: "#3b5566",
   };
-  const STATUS = { connected: "#3ef2a0", partial: "#ffb547", planned: "#5f7f8f", unsupported: "#39424a" };
+  const STATUS = { connected: "#3ef2a0", partial: "#ffb547", "needs-auth": "#ffb547", planned: "#5f7f8f", unsupported: "#39424a" };
+  const ALERT_COL = { phishing: "#ff4d5e", warn: "#ffb547", info: "#27d3ff" };
+  let alerted = {};   // account id -> worst alert level in the last 24h
   const $ = (id) => document.getElementById(id);
   const canvas = $("graph"), ctx = canvas.getContext("2d");
   let W, H, nodes = [], edges = [], byId = {}, hidden = new Set(), selected = null, hover = null, flash = new Set();
@@ -255,6 +257,12 @@
           ctx.fillText(n.label + (n.status === "unsupported" ? " (no API)" : ""), x, y + r + 14 * d);
         }
       }
+      const alert = n.type === "account" && alerted[n.id.slice(4)];
+      if (alert || n.live) {  // pulsing ring: account with a fresh alert, or a live threat from the feed
+        const c = alert ? ALERT_COL[alert] || "#ffb547" : "#ff4d5e", ph = (t / 1200) % 1;
+        ctx.globalAlpha = al * (1 - ph) * 0.9; ctx.strokeStyle = c; ctx.lineWidth = 2 * d; ctx.shadowColor = c; ctx.shadowBlur = 12 * d;
+        ctx.beginPath(); ctx.arc(x, y, r + (4 + 16 * ph) * d, 0, Math.PI * 2); ctx.stroke(); ctx.shadowBlur = 0;
+      }
       if (n === selected || n === hover) drawReticle(x, y, n.type === "hub" ? r * 1.25 * 1.45 : r, t, color);
       ctx.globalAlpha = 1;
     });
@@ -290,7 +298,8 @@
     if (n && n.type === "hub") focus(n);
     const d = $("detail");
     if (!n) { d.innerHTML = '<p class="muted">Tap a bubble, or pinch it with the camera on.</p>'; return; }
-    const status = n.status ? `<p class="${n.status === "connected" ? "ok" : n.status === "unsupported" ? "bad" : "warn"}">status: ${n.status}</p>` : "";
+    const label = { connected: "connected", "needs-auth": "needs sign-in (Settings > Connectors on claude.ai)", planned: "not connected yet", partial: "partly connected", unsupported: "no way to connect" };
+    const status = n.status ? `<p class="${n.status === "connected" ? "ok" : n.status === "unsupported" ? "bad" : "warn"}">status: ${label[n.status] || n.status}</p>` : "";
     d.innerHTML = `<h3></h3>${status}<div class="body"></div>`;
     d.querySelector("h3").textContent = n.label;
     d.querySelector(".body").textContent = n.body || "(no note yet)";
@@ -401,7 +410,22 @@
     });
   }
 
-  function refresh() { loadSecurity(); loadPending(); loadAudit(); }
+  async function loadAlerts() {
+    const list = await (await api("/api/alerts")).json();
+    const day = Date.now() - 864e5; alerted = {};
+    const rank = { info: 1, warn: 2, phishing: 3 };
+    const box = $("alerts"); box.innerHTML = "";
+    const recent = list.filter((a) => a.account && Date.parse(a.ts) > day);
+    recent.forEach((a) => { if ((rank[a.level] || 0) > (rank[alerted[a.account]] || 0)) alerted[a.account] = a.level; });
+    if (!recent.length) { box.innerHTML = '<li class="muted">All quiet. Suspiciously quiet.</li>'; return; }
+    recent.slice(-12).reverse().forEach((a) => {
+      const li = document.createElement("li"); li.className = "alert " + (a.level || "info");
+      const tag = document.createElement("b"); tag.textContent = (a.level === "phishing" ? "PHISHING " : "") + a.account;
+      li.append(tag, " " + a.text); li.title = a.ts; box.appendChild(li);
+    });
+  }
+
+  function refresh() { loadSecurity(); loadPending(); loadAudit(); loadAlerts(); }
 
   // ---------------------------------------------------------------- chat
   function say(who, text) {
@@ -551,11 +575,37 @@
   };
 
   $("refreshBtn").onclick = async () => {
+    $("refreshBtn").textContent = "⟳ Checking…";
     const r = await (await api("/api/refresh-accounts", {})).json();
-    say("jarvis", r.error ? "⚠ " + r.error : r.changed.length ? "Updated: " + r.changed.join(", ") : "No account changes.");
+    $("refreshBtn").textContent = "⟳ Accounts";
+    if (r.error) say("jarvis", "⚠ " + r.error);
+    else if (!r.connected.length) say("jarvis", "No accounts connected yet. On claude.ai go to Settings > Connectors, connect Gmail, Google Calendar and Google Drive, then press ⟳ Accounts again.");
+    else say("jarvis", "Connected: " + r.connected.join(", ") + ". Reading is allowed; anything that sends or changes stuff still waits for your Approve.");
     loadGraph();
   };
 
-  loadGraph().then(() => requestAnimationFrame(loop));
+  // ---------------------------------------------------------------- morning briefing
+  async function runBriefing(force) {
+    const out = say("jarvis", "☀ Preparing your briefing… (reading calendar and email)");
+    document.querySelector(".dial").classList.add("busy"); $("mode").textContent = "BRIEFING";
+    try {
+      const b = await (await api("/api/briefing", { force })).json();
+      out.textContent = "☀ " + (b.text || "Nothing to report.");
+      if (b.flags && b.flags.length) say("jarvis", "⚠ Briefing flagged by scanner: " + b.flags.join(", "));
+      document.querySelector(".dial").classList.remove("busy"); idleMode();
+      speak(b.text);
+    } catch (e) { out.textContent = "⚠ " + e; document.querySelector(".dial").classList.remove("busy"); idleMode(); }
+  }
+  $("briefBtn").onclick = () => runBriefing(true);
+  async function autoBriefing() {
+    // once a day, the first time you open JARVIS after 5am, if any account is connected
+    const b = await (await api("/api/briefing")).json();
+    const today = new Date().toLocaleDateString("en-CA");
+    const any = nodes.some((n) => n.type === "account" && n.status === "connected");
+    if (any && b.date !== today && new Date().getHours() >= 5) runBriefing(false);
+    else if (b.date === today && b.text) say("jarvis", "☀ " + b.text);
+  }
+
+  loadGraph().then(() => { requestAnimationFrame(loop); setTimeout(autoBriefing, 2500); });
   refresh(); setInterval(refresh, 15000);
 })();

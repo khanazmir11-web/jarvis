@@ -56,6 +56,11 @@ ul{list-style:none;margin:0;padding:0}
 .card .row{display:flex;gap:6px;margin-top:6px}
 .card .row button:first-child{color:var(--green)}.card .row button:last-child{color:var(--red)}
 .flag{color:var(--red);font-size:11px}
+#alerts li{font-size:13px;padding:4px 8px;margin:4px 0;border-left:2px solid var(--cyan);background:rgba(39,211,255,.05)}
+#alerts li.warn{border-color:var(--amber);background:rgba(255,181,71,.06)}
+#alerts li.phishing{border-color:var(--red);background:rgba(255,77,94,.08)}
+#alerts li b{font:600 10px Orbitron,sans-serif;letter-spacing:1px;margin-right:4px;text-transform:uppercase}
+#alerts li.muted{border:none;background:none;padding-left:0}
 #audit li{font:11px "Share Tech Mono",monospace;color:var(--dim);border-bottom:1px solid rgba(39,211,255,.06);padding:2px 0}
 #detail{border-bottom:1px solid var(--line);padding-bottom:8px;max-height:40%;overflow:auto;white-space:pre-wrap;font-size:12px}
 #detail h3{margin:0 0 4px;color:var(--cyan);font-size:14px}

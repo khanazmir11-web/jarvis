@@ -38,4 +38,9 @@ if __name__ == "__main__":
     web = Path(__file__).resolve().parent / "web"
     for s in (192, 512):
         png(s, web / f"icon-{s}.png")
+    # Windows .ico for the desktop shortcut: a 256px PNG wrapped in an ICO header
+    png(256, web / "icon-256.png")
+    data = (web / "icon-256.png").read_bytes()
+    (web / "jarvis.ico").write_bytes(struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, len(data), 22) + data)
+    (web / "icon-256.png").unlink()
     print("icons written")
