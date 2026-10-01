@@ -85,3 +85,8 @@ body.hide-panels .panel{opacity:0;pointer-events:none;transform:translateY(12px)
 body[data-theme="ironman"]{--cyan:#ff4433;--rgb:255,68,51;--glow:#ffd36b;--line:rgba(255,68,51,.22)}
 body[data-theme="ironman"] .boot-title,body[data-theme="ironman"] #readout b{color:#ffd36b}
 body[data-theme="stealth"]{--cyan:#dfe8ee;--rgb:223,232,238;--glow:#ffffff;--line:rgba(223,232,238,.18);--fg:#eef3f6}
+
+#linkForm{display:grid;gap:4px;margin-bottom:4px}
+#linkForm input{width:100%;box-sizing:border-box;background:rgba(0,0,0,.4);border:1px solid var(--line);color:var(--fg);border-radius:2px;padding:6px 8px;font:inherit;outline:none}
+.linkrow{display:flex;gap:6px;margin-top:6px}
+.small{font-size:11px}

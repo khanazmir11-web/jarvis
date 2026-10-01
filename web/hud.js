@@ -2,7 +2,7 @@
 (() => {
   const TYPES = {
     core: "#27d3ff", hub: "#9fe8ff", account: "#3ef2a0", threat: "#ff4d5e", defense: "#ffb547",
-    security: "#ff8a5c", memory: "#b58cff", learning: "#5ca8ff", ghost: "#3b5566",
+    security: "#ff8a5c", memory: "#b58cff", learning: "#5ca8ff", ghost: "#3b5566", link: "#4fd8ff",
   };
   const STATUS = { connected: "#3ef2a0", partial: "#ffb547", "needs-auth": "#ffb547", planned: "#5f7f8f", unsupported: "#39424a" };
   const ALERT_COL = { phishing: "#ff4d5e", warn: "#ffb547", info: "#27d3ff" };
@@ -68,13 +68,13 @@
       const r = n.type === "core" ? 0 : n.type === "hub" ? 200 : 380;
       const node = Object.assign(n, prev ? { x: prev.x, y: prev.y, vx: 0, vy: 0 } :
         { x: Math.cos(a) * r + Math.random() * 40, y: Math.sin(a) * r + Math.random() * 40, vx: 0, vy: 0 });
-      node.r = n.type === "core" ? 34 : n.type === "hub" ? 18 : n.type === "account" ? 14 : 7;
+      node.r = n.type === "core" ? 34 : n.type === "hub" ? 18 : n.type === "account" ? 14 : n.type === "link" ? 11 : 7;
       byId[n.id] = node; return node;
     });
     edges = g.edges.map(([s, t]) => [byId[s], byId[t]]).filter(([s, t]) => s && t);
     edges.forEach(([a, b]) => { if (a.type === "hub" && b.type !== "core") b.hubC = hubColor(a); if (b.type === "hub" && a.type !== "core") a.hubC = hubColor(b); });
     const deg = {}; edges.forEach(([s, t]) => { deg[s.id] = (deg[s.id] || 0) + 1; deg[t.id] = (deg[t.id] || 0) + 1; });
-    nodes.forEach((n) => { if (!["core", "hub", "account"].includes(n.type)) n.r = 5 + Math.min(8, (deg[n.id] || 0)); });
+    nodes.forEach((n) => { if (!["core", "hub", "account", "link"].includes(n.type)) n.r = 5 + Math.min(8, (deg[n.id] || 0)); });
     nodes.forEach((n) => { n.kids = n.type === "hub" ? edges.filter(([a, b]) => (a === n || b === n) && a.type !== "core" && b.type !== "core").length : 0; });
     updateStats();
     heat = 1; buildFilters();
@@ -348,7 +348,39 @@
     d.innerHTML = `<h3></h3>${status}<div class="body"></div>`;
     d.querySelector("h3").textContent = n.label;
     d.querySelector(".body").textContent = n.body || "(no note yet)";
+    if (n.url) {
+      const row = document.createElement("div"); row.className = "linkrow";
+      const open = document.createElement("button"); open.textContent = "Open ↗"; open.onclick = () => openNode(n);
+      row.append(open);
+      if (n.type === "link") {
+        const rm = document.createElement("button"); rm.textContent = "Remove"; rm.className = "ghost";
+        rm.onclick = async () => { await api("/api/links", { action: "remove", id: n.id }); select(null); loadGraph(); };
+        row.append(rm);
+      }
+      d.append(row);
+    }
   }
+
+  // ---- web pages: every bubble with a url opens its site in a new window (your normal browser sign-ins apply)
+  function openNode(n) {
+    if (!n || !n.url) return false;
+    window.open(n.url, "_blank", "noopener,noreferrer");
+    say("jarvis", "Opening " + n.label + ". Try not to get lost in there.");
+    return true;
+  }
+  function findNode(name) {
+    const q = name.toLowerCase().replace(/^(my|the)\s+/, "").replace(/[.!?]+$/, "").trim();
+    const withUrl = nodes.filter((n) => n.url);
+    return withUrl.find((n) => n.label.toLowerCase() === q) || withUrl.find((n) => n.label.toLowerCase().includes(q)) ||
+      withUrl.find((n) => q.includes(n.label.toLowerCase().split(/[\s/(]/)[0]));
+  }
+  $("linkForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const r = await (await api("/api/links", { name: $("linkName").value, url: $("linkUrl").value, group: $("linkGroup").value })).json();
+    if (r.error) { say("jarvis", "⚠ " + r.error); return; }
+    $("linkName").value = $("linkUrl").value = ""; loadGraph();
+    say("jarvis", "Link added. Zoom in on its main circle to find it.");
+  });
 
   // mouse / touch
   let dragging = null, panFrom = null;
@@ -362,6 +394,7 @@
     else if (panFrom) { userMoved = true; target = null; view.x = panFrom[2] + (e.clientX - panFrom[0]) * devicePixelRatio; view.y = panFrom[3] + (e.clientY - panFrom[1]) * devicePixelRatio; }
   });
   addEventListener("pointerup", () => { dragging = null; panFrom = null; });
+  canvas.addEventListener("dblclick", (e) => openNode(nodeAt(e.clientX, e.clientY)));
   canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.1 : 0.9); }, { passive: false });
 
   function zoomBy(f) { userMoved = true; target = null; view.k = Math.max(0.2, Math.min(4, view.k * f)); }
@@ -386,6 +419,7 @@
   window.HUD = {
     hover: (cx, cy) => { hover = nodeAt(cx, cy); return hover; },
     pick: (cx, cy) => { const n = nodeAt(cx, cy); if (n) select(n); return n; },
+    open: (cx, cy) => openNode(nodeAt(cx, cy)),
     panBy: (dx, dy) => { userMoved = true; target = null; view.x += dx * devicePixelRatio; view.y += dy * devicePixelRatio; },
     positions: () => nodes.map((n) => [n.x, n.y]),
     // fist gesture: grab one bubble and move it
@@ -400,7 +434,7 @@
   function updateStats() {
     const acc = nodes.filter((n) => n.type === "account");
     const on = acc.filter((n) => n.status === "connected").length;
-    const notes = nodes.filter((n) => !["core", "hub", "account"].includes(n.type)).length;
+    const notes = nodes.filter((n) => !["core", "hub", "account", "link"].includes(n.type)).length;
     $("statAcc").textContent = `${on}/${acc.length}`; $("statNotes").textContent = notes;
     $("statThreats").textContent = nodes.filter((n) => n.type === "threat").length;
   }
@@ -487,6 +521,8 @@
     e.preventDefault();
     const text = $("msg").value.trim(); if (!text) return;
     $("msg").value = ""; say("me", text);
+    const op = text.match(/^(?:hey\s+jarvis[,\s]*)?(?:please\s+)?(?:open|launch|go to|show me)\s+(.+)/i);
+    if (op && openNode(findNode(op[1]))) return;
     const out = say("jarvis", "…");
     document.querySelector(".dial").classList.add("busy"); $("mode").textContent = "THINKING";
     try {

@@ -33,6 +33,12 @@ This uses Meta's official WhatsApp Business Cloud API. Unofficial "link your per
 
 Privacy: every webhook must carry Meta's signature made with your App Secret, and only your number gets an answer. Messages from anyone else are silently ignored and logged as a warning. From your phone, send `pending`, `approve <id>` or `reject <id>` to handle proposals.
 
+## Web links in the bubbles
+
+Every account bubble opens its website: double-click it, select it and press **Open ↗**, or say/type "open YouTube". Pages open in your normal browser, so wherever you're signed in there, you're signed in here.
+
+Add your own pages under **Web links** in the left panel (name, address, and which main circle it hangs off). They're saved in `logs/links.json` on your PC only. Addresses with look-alike letters (`xn--`) or an `@` trick are refused, since those are classic phishing links.
+
 ## Connect accounts
 
 1. On claude.ai go to Settings > Connectors and connect Gmail, Google Calendar and Google Drive.

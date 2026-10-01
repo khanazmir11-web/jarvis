@@ -78,6 +78,45 @@ def accounts():
     return out
 
 
+def web_links():
+    """Your own web-page bubbles. Kept in logs/links.json (not in git) so a git pull never touches them."""
+    return load_json(LOGS / "links.json", [])
+
+
+def clean_url(url):
+    url = url.strip()
+    if url and "://" not in url:
+        url = "https://" + url
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname or "." not in u.hostname:
+        return None, "That doesn't look like a web address."
+    if u.hostname.startswith("xn--") or ".xn--" in u.hostname:
+        return None, "Blocked: that address uses look-alike letters, a common phishing trick."
+    if u.username or u.password or "@" in u.netloc:
+        return None, "Blocked: addresses with an @ before the site name are a phishing trick."
+    return url, None
+
+
+def edit_links(body):
+    links = web_links()
+    if body.get("action") == "remove":
+        lid = str(body.get("id", "")).removeprefix("link:")
+        links = [l for l in links if l["id"] != lid]
+    else:
+        url, err = clean_url(str(body.get("url", ""))[:500])
+        if err:
+            return {"error": err}
+        name = re.sub(r"\s+", " ", str(body.get("name", ""))).strip()[:40] or urlparse(url).hostname.removeprefix("www.")
+        group = re.sub(r"\s+", " ", str(body.get("group", ""))).strip()[:24] or "Web"
+        if len(links) >= 80:
+            return {"error": "That's 80 links already. Remove some first."}
+        links.append({"id": uuid.uuid4().hex[:8], "name": name, "url": url, "group": group})
+    with LOCK:
+        (LOGS / "links.json").write_text(json.dumps(links, indent=1), encoding="utf-8")
+    audit("links", action=body.get("action", "add"), name=str(body.get("name", ""))[:40])
+    return {"ok": True}
+
+
 def audit(kind, **data):
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, **data}
     with LOCK, open(LOGS / "audit.jsonl", "a", encoding="utf-8") as f:
@@ -124,13 +163,22 @@ def build_graph():
         nid = "acc:" + acc["id"]
         nodes[nid] = {"id": nid, "label": acc["name"], "type": "account",
                       "status": acc["status"], "group": acc.get("group", ""),
-                      "body": acc.get("how", "")}
+                      "body": acc.get("how", ""), "url": acc.get("url", "")}
         hub = "grp:" + acc.get("group", "Other")
         if hub not in nodes:
             nodes[hub] = {"id": hub, "label": acc.get("group", "Other"), "type": "hub",
                           "body": f"Main circle for your {acc.get('group', 'other')} accounts. Zoom in to see them."}
             edges.append(["jarvis", hub])
         edges.append([hub, nid])
+    for link in web_links():
+        hub = "grp:" + link["group"]
+        if hub not in nodes:
+            nodes[hub] = {"id": hub, "label": link["group"], "type": "hub",
+                          "body": f"Main circle for your {link['group']} web links. Zoom in to see them."}
+            edges.append(["jarvis", hub])
+        nodes["link:" + link["id"]] = {"id": "link:" + link["id"], "label": link["name"], "type": "link",
+                                       "url": link["url"], "body": link["url"]}
+        edges.append([hub, "link:" + link["id"]])
     for path in sorted(VAULT.rglob("*.md")):
         meta, body = parse_note(path)
         nid = path.stem
@@ -477,6 +525,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tts":
             audio = tts(str(body.get("text", "")))
             return self.send(200, audio, "audio/mpeg") if audio else self.send(204, b"", "text/plain")
+        if path == "/api/links":
+            return self.send(200, edit_links(body))
         if path == "/api/watch":
             return self.send(200, watch_pass(int(body.get("minutes", 1440))))
         self.send(404, {"error": "not found"})

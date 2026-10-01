@@ -1,50 +1,58 @@
 {
-  "_help": "Each account becomes a bubble. status: planned | connected | partial | unsupported. 'match' is the text searched for in `claude mcp list` to auto-detect a connector. read_tools are allowed during normal chat; write_tools are only allowed for an action you approve. Tool names must match what `claude mcp list` shows on your device (mcp__<server>__<tool>, or mcp__<server> for all of its tools).",
+  "_help": "Each account becomes a bubble. status: planned | connected | partial | unsupported. 'match' is the text searched for in `claude mcp list` to auto-detect a connector. read_tools are allowed during normal chat; write_tools are only allowed for an action you approve. 'url' is the web page the bubble opens. Tool names must match what `claude mcp list` shows on your device (mcp__<server>__<tool>, or mcp__<server> for all of its tools).",
   "accounts": [
     {
-      "id": "gmail", "name": "Gmail", "group": "Google", "status": "planned",
+      "id": "gmail", "url": "https://mail.google.com",
+      "name": "Gmail", "group": "Google", "status": "planned",
       "match": "gmail",
       "how": "Claude connector: Settings > Connectors > Gmail (or claude.ai Gmail in Claude Code).",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "gdrive", "name": "Google Drive", "group": "Google", "status": "planned",
+      "id": "gdrive", "url": "https://drive.google.com",
+      "name": "Google Drive", "group": "Google", "status": "planned",
       "match": "drive",
       "how": "Claude connector: Google Drive.",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "gcal", "name": "Google Calendar", "group": "Google", "status": "planned",
+      "id": "gcal", "url": "https://calendar.google.com",
+      "name": "Google Calendar", "group": "Google", "status": "planned",
       "match": "calendar",
       "how": "Claude connector: Google Calendar.",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "youtube", "name": "YouTube", "group": "Google", "status": "planned",
+      "id": "youtube", "url": "https://www.youtube.com",
+      "name": "YouTube", "group": "Google", "status": "planned",
       "match": "youtube",
       "how": "YouTube Data API v3 through a YouTube MCP server, using your own Google Cloud OAuth client.",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "classroom", "name": "Google Classroom / e-learning", "group": "E-learning", "status": "planned",
+      "id": "classroom", "url": "https://classroom.google.com",
+      "name": "Google Classroom / e-learning", "group": "E-learning", "status": "planned",
       "match": "classroom",
       "how": "Google Classroom API through an MCP server; other learning sites only if they publish an API.",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "tiktok", "name": "TikTok", "group": "Social", "status": "partial",
+      "id": "tiktok", "url": "https://www.tiktok.com",
+      "name": "TikTok", "group": "Social", "status": "partial",
       "match": "tiktok",
       "how": "TikTok Display API only: your profile and your own videos. Requires registering a TikTok developer app.",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "playstore", "name": "Google Play Store", "group": "Stores", "status": "unsupported",
+      "id": "playstore", "url": "https://play.google.com/store",
+      "name": "Google Play Store", "group": "Stores", "status": "unsupported",
       "match": "",
       "how": "No API for a person's own purchases or library. The Play Developer API is only for app publishers. Unofficial scrapers break Google's terms and risk your account.",
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "psn", "name": "PlayStation Store", "group": "Stores", "status": "unsupported",
+      "id": "psn", "url": "https://store.playstation.com",
+      "name": "PlayStation Store", "group": "Stores", "status": "unsupported",
       "match": "",
       "how": "Sony has no public API. Unofficial PSN libraries break Sony's terms and risk a ban.",
       "read_tools": [], "write_tools": []
