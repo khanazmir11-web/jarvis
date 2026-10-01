@@ -749,6 +749,7 @@
     $("refreshBtn").textContent = "⟳ Accounts";
     if (r.error) say("jarvis", "⚠ " + r.error);
     else if (!r.connected.length) say("jarvis", "No accounts connected yet. On claude.ai go to Settings > Connectors, connect Gmail, Google Calendar and Google Drive, then press ⟳ Accounts again.");
+    if (r.seen && !(r.connected || []).length) say("jarvis", r.seen.length ? "Claude Code on this PC sees: " + r.seen.map((x) => `${x.name} (${x.status})`).join(", ") : "Claude Code on this PC lists no connectors at all.");
     else say("jarvis", "Connected: " + r.connected.join(", ") + ". Reading is allowed; anything that sends or changes stuff still waits for your Approve.");
     loadGraph();
   };

@@ -579,15 +579,21 @@ WRITE_WORDS = re.compile(r"(send|create|update|delete|trash|share|modify|move|re
 READ_WORDS = re.compile(r"^(search|list|get|read|fetch|find|query|download|describe|view|lookup|check|count|summar)")
 
 
+LIST_PROMPT = ("Reply with only the exact names of every tool or deferred tool available to you whose name starts "
+               "with mcp__, one per line, no other text. If there are none, reply NONE.")
+
+
 def discover():
-    """Start Claude Code just long enough to read its init event (tools + MCP servers), then stop it."""
+    """Ask Claude Code which tools and MCP servers it has. The init event lists them, but claude.ai connectors
+    can still be connecting at that moment, so if it shows none we let the turn run and ask Claude to list them."""
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-    cmd = [CLAUDE_BIN, "-p", "ping", "--output-format", "stream-json", "--verbose", "--max-turns", "1",
+    cmd = [CLAUDE_BIN, "-p", LIST_PROMPT, "--output-format", "stream-json", "--verbose", "--max-turns", "2",
            "--permission-mode", "default", "--disallowedTools", *policy().get("always_blocked_tools", [])]
     proc = subprocess.Popen(cmd, cwd=VAULT, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             text=True, encoding="utf-8", errors="replace")
-    timer = threading.Timer(120, proc.kill)
+    timer = threading.Timer(150, proc.kill)
     timer.start()
+    tools, servers, said = None, None, ""
     try:
         for line in proc.stdout:
             try:
@@ -595,11 +601,37 @@ def discover():
             except ValueError:
                 continue
             if ev.get("type") == "system" and ev.get("subtype") == "init":
-                return ev.get("tools", []), ev.get("mcp_servers", [])
-        return None, None
+                tools, servers = ev.get("tools", []), ev.get("mcp_servers", [])
+                if any(t.startswith("mcp__") for t in tools):
+                    return tools, servers
+            elif ev.get("type") == "result":
+                said = str(ev.get("result") or said)
+                break
+            elif ev.get("type") == "assistant":
+                said += "".join(c.get("text", "") for c in ev.get("message", {}).get("content", []) if isinstance(c, dict))
+        if tools is not None:
+            tools = tools + re.findall(r"\bmcp__[A-Za-z0-9_\-]+__[A-Za-z0-9_\-]+", said)
+        return tools, servers
     finally:
         timer.cancel()
         proc.kill()
+
+
+def mcp_list():
+    """`claude mcp list` waits for every server's health check, so it is the best picture of what is connected."""
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    try:
+        out = subprocess.run([CLAUDE_BIN, "mcp", "list"], cwd=VAULT, env=env, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=90).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    (LOGS / "mcp_list.txt").write_text(out, encoding="utf-8")
+    seen = []
+    for line in out.splitlines():
+        m = re.match(r"^(.+?):\s.*\s-\s(.+)$", line.strip())
+        if m:
+            seen.append({"name": m.group(1).strip(), "status": re.sub(r"^[^A-Za-z]+", "", m.group(2)).strip()})
+    return seen
 
 
 def classify(tool):
@@ -615,15 +647,17 @@ def refresh_accounts():
         tools, servers = discover()
     except OSError as e:
         return {"error": f"could not start Claude Code: {e}"}
+    seen = mcp_list()
     if tools is None:
-        return {"error": "Claude Code did not report its tools. Is it signed in?"}
-    if not any(t.startswith("mcp__") for t in tools) and not servers:
+        return {"error": "Claude Code did not report its tools. Is it signed in?", "seen": seen}
+    if not any(t.startswith("mcp__") for t in tools) and not servers and not seen:
         return {"error": "Claude Code on this PC sees no connectors. If chat says 'Not logged in', sign Claude Code in first (see the steps in the chat with Claude), then press ⟳ Accounts again."}
+    servers = (servers or []) + [{"name": x["name"], "status": "needs-auth" if "auth" in x["status"].lower() else x["status"]} for x in seen]
     changed, found, state = [], {}, {}
     for acc in accounts():
         if acc["status"] == "unsupported" or not acc.get("match"):
             continue
-        mine = [t for t in tools if t.startswith("mcp__") and acc["match"] in t.split("__")[1].lower()]
+        mine = sorted({t for t in tools if t.startswith("mcp__") and acc["match"] in t.split("__")[1].lower()})
         waiting = [srv["name"] for srv in servers or [] if acc["match"] in srv.get("name", "").lower()
                    and srv.get("status") == "needs-auth"]
         if mine:
@@ -638,7 +672,7 @@ def refresh_accounts():
             changed.append(acc["id"])
     (LOGS / "accounts_state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
     audit("accounts_refreshed", changed=changed, found=found)
-    return {"changed": changed, "found": found,
+    return {"changed": changed, "found": found, "seen": seen,
             "connected": [k for k, v in state.items() if v["status"] == "connected"]}
 
 
