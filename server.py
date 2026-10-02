@@ -490,7 +490,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/pending": pending,
             "/api/security": security_report,
             "/api/audit": lambda: tail_jsonl(LOGS / "audit.jsonl", 60),
-            "/api/alerts": lambda: tail_jsonl(LOGS / "alerts.jsonl", 30),
+            "/api/alerts": recent_alerts,
             "/api/briefing": lambda: load_json(LOGS / "briefing.json", {}),
         }
         if path in routes:
@@ -725,8 +725,24 @@ in the last {mins} minutes: new important email, calendar changes in the next 24
 security alerts (new sign-in, password or recovery change).
 Also check new emails for phishing or scams (fake login links, urgent payment, prize, impersonation, odd sender domain).
 Reply with one line per finding, in exactly this form:
-<account id> | <info|warn|phishing> | <what happened, under 20 words>
+<account id> | <info|warn|phishing|setup> | <what happened, under 20 words>
+Use "setup" when you could not check an account at all (its tools are missing or it lacks permission).
 If nothing needs attention, reply exactly: ALL CLEAR"""
+
+
+SETUP_HINT = re.compile(r"(couldn.t check|could not check|skipped|no \w+ connector|lacks? .*(scope|permission)|"
+                        r"insufficient.scope|reconnect|re-?authori[sz]e|not connected)", re.I)
+
+
+def recent_alerts(n=30):
+    """Alerts for the HUD. Problems with JARVIS's own access ("setup") are not news every hour:
+    only the newest one per account is kept, so the list shows real findings."""
+    items = tail_jsonl(LOGS / "alerts.jsonl", 200)
+    for a in items:
+        if a.get("level") == "setup" or (a.get("level") != "phishing" and SETUP_HINT.search(a.get("text", ""))):
+            a["level"] = "setup"
+    newest_setup = {a.get("account"): i for i, a in enumerate(items) if a.get("level") == "setup"}
+    return [a for i, a in enumerate(items) if a.get("level") != "setup" or newest_setup.get(a.get("account")) == i][-n:]
 
 
 def watch_pass(mins=60):

@@ -518,11 +518,11 @@
     const rank = { info: 1, warn: 2, phishing: 3 };
     const box = $("alerts"); box.innerHTML = "";
     const recent = list.filter((a) => a.account && Date.parse(a.ts) > day);
-    recent.forEach((a) => { if ((rank[a.level] || 0) > (rank[alerted[a.account]] || 0)) alerted[a.account] = a.level; });
+    recent.forEach((a) => { if (a.level !== "setup" && (rank[a.level] || 0) > (rank[alerted[a.account]] || 0)) alerted[a.account] = a.level; });
     if (!recent.length) { box.innerHTML = '<li class="muted">All quiet. Suspiciously quiet.</li>'; return; }
     recent.slice(-12).reverse().forEach((a) => {
       const li = document.createElement("li"); li.className = "alert " + (a.level || "info");
-      const tag = document.createElement("b"); tag.textContent = (a.level === "phishing" ? "PHISHING " : "") + a.account;
+      const tag = document.createElement("b"); tag.textContent = (a.level === "phishing" ? "PHISHING " : a.level === "setup" ? "FIX ACCESS · " : "") + a.account;
       li.append(tag, " " + a.text); li.title = a.ts; box.appendChild(li);
     });
   }
