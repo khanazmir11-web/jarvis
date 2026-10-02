@@ -26,7 +26,7 @@
       "id": "youtube", "url": "https://www.youtube.com",
       "name": "YouTube", "group": "Google", "status": "planned",
       "match": "youtube",
-      "how": "YouTube Data API v3 through a YouTube MCP server, using your own Google Cloud OAuth client.",
+      "how": "Read-only, built into JARVIS (youtube_mcp.py) with your own Google Cloud OAuth client. Run connect-youtube.bat once. See README: YouTube.",
       "read_tools": [], "write_tools": []
     },
     {

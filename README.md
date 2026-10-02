@@ -33,6 +33,17 @@ This uses Meta's official WhatsApp Business Cloud API. Unofficial "link your per
 
 Privacy: every webhook must carry Meta's signature made with your App Secret, and only your number gets an answer. Messages from anyone else are silently ignored and logged as a warning. From your phone, send `pending`, `approve <id>` or `reject <id>` to handle proposals.
 
+## YouTube (read-only)
+
+claude.ai has no connector for your own YouTube account, so JARVIS ships its own small one, `youtube_mcp.py`. It only has the `youtube.readonly` permission: it can see your channel, subscriptions, playlists and new uploads, and search, but can never post, like, comment or delete.
+
+1. In [Google Cloud Console](https://console.cloud.google.com): create a project, enable **YouTube Data API v3**, set up the **OAuth consent screen** (External, Testing, add yourself as a test user), then **Credentials > Create credentials > OAuth client ID > Desktop app** and download the JSON.
+2. Save it as `%USERPROFILE%\.jarvis\youtube_client.json` (outside this folder, never in git, never in a chat).
+3. Double-click `connect-youtube.bat`. It signs you in, adds the connector to Claude Code, and checks it works.
+4. In JARVIS press **⟳ Accounts**. The YouTube bubble turns green.
+
+To disconnect: delete `%USERPROFILE%\.jarvis\youtube_token.json` and run `claude mcp remove --scope user youtube`.
+
 ## Web links in the bubbles
 
 Every account bubble opens its website: double-click it, select it and press **Open ↗**, or say/type "open YouTube". Pages open in your normal browser, so wherever you're signed in there, you're signed in here.
