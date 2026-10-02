@@ -313,8 +313,23 @@
     });
   }
 
+  // ---- orbit: when you leave it alone, the whole system slowly turns around the core.
+  // It eases to a stop the moment you touch the mouse, a hand shows up on the camera, or you reset,
+  // and only starts again after ORBIT_IDLE_MS with no hand in view and nothing selected.
+  const ORBIT_SPEED = 0.06, ORBIT_IDLE_MS = 6000;   // radians per second (about one turn every 105 s)
+  let spin = 0, lastTouch = performance.now(), handOn = false, lastT = 0;
+  const touched = () => { lastTouch = performance.now(); };
+  function orbit(t) {
+    const dt = Math.min(0.05, (t - lastT) / 1000); lastT = t;
+    const want = !handOn && !dragging && !panFrom && !selected && boot() >= 1 && t - lastTouch > ORBIT_IDLE_MS ? ORBIT_SPEED : 0;
+    spin += (want - spin) * (want ? 0.01 : 0.12);   // gentle start, quick stop
+    if (spin < 1e-4) { spin = want ? spin : 0; return; }
+    const a = spin * dt, c = Math.cos(a), sn = Math.sin(a);
+    nodes.forEach((n) => { if (n.type === "core" || n === dragging) return; const x = n.x; n.x = x * c - n.y * sn; n.y = x * sn + n.y * c; });
+  }
+
   function loop(t) {
-    step(); if (!userMoved && t - fitStart < 5000) fit();
+    step(); orbit(t); if (!userMoved && t - fitStart < 5000) fit();
     if (target) {
       view.x += (target.x - view.x) * 0.12; view.y += (target.y - view.y) * 0.12; view.k += (target.k - view.k) * 0.12;
       if (Math.abs(target.k - view.k) < 0.002 && Math.abs(target.x - view.x) < 1) target = null;
@@ -385,20 +400,22 @@
   // mouse / touch
   let dragging = null, panFrom = null;
   canvas.addEventListener("pointerdown", (e) => {
+    touched();
     const n = nodeAt(e.clientX, e.clientY);
     if (n) { dragging = n; heat = Math.max(heat, 0.3); select(n); } else panFrom = [e.clientX, e.clientY, view.x, view.y];
   });
   addEventListener("pointermove", (e) => {
+    touched();
     hover = nodeAt(e.clientX, e.clientY);
     if (dragging) { const [wx, wy] = toWorld(e.clientX * devicePixelRatio, e.clientY * devicePixelRatio); dragging.x = wx; dragging.y = wy; heat = Math.max(heat, 0.3); }
     else if (panFrom) { userMoved = true; target = null; view.x = panFrom[2] + (e.clientX - panFrom[0]) * devicePixelRatio; view.y = panFrom[3] + (e.clientY - panFrom[1]) * devicePixelRatio; }
   });
   addEventListener("pointerup", () => { dragging = null; panFrom = null; });
   canvas.addEventListener("dblclick", (e) => openNode(nodeAt(e.clientX, e.clientY)));
-  canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.1 : 0.9); }, { passive: false });
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); touched(); zoomBy(e.deltaY < 0 ? 1.1 : 0.9); }, { passive: false });
 
   function zoomBy(f) { userMoved = true; target = null; view.k = Math.max(0.2, Math.min(4, view.k * f)); }
-  function reset() { userMoved = false; target = null; fitStart = performance.now(); select(null); }
+  function reset() { touched(); spin = 0; userMoved = false; target = null; fitStart = performance.now(); select(null); }
 
   // keep the whole graph inside the space between the two panels
   let userMoved = false, fitStart = 0;
@@ -418,6 +435,7 @@
   // gesture API (used by gestures.js)
   window.HUD = {
     hover: (cx, cy) => { hover = nodeAt(cx, cy); return hover; },
+    handActive: (on) => { handOn = on; if (on) touched(); },
     pick: (cx, cy) => { const n = nodeAt(cx, cy); if (n) select(n); return n; },
     open: (cx, cy) => openNode(nodeAt(cx, cy)),
     panBy: (dx, dy) => { userMoved = true; target = null; view.x += dx * devicePixelRatio; view.y += dy * devicePixelRatio; },

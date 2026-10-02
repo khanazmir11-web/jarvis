@@ -22,11 +22,12 @@ const PINCH_ON = 0.28;      // thumb-index gap / hand size to start a pinch
 const PINCH_OFF = 0.42;     // ...and to release it (the gap between them stops flicker)
 const CONFIRM_FRAMES = 3;   // a pinch change must hold this many frames
 const DRAG_START_PX = 14;   // move this far while pinched before it counts as a drag
-const LOST_GRACE_MS = 350;  // keep the last state this long if the hand drops out for a moment
+const LOST_GRACE_MS = 600;  // keep the last state this long if the hand drops out for a moment
 const DWELL_MS = 1300;      // hold still on a bubble this long to select it
 const DWELL_PX = 18;        // ...moving less than this
 const SWIPE_FRAC = 0.33;    // a swipe must cross a third of the screen...
 const SWIPE_MS = 260;       // ...within this time
+const FOLLOW = 22;          // how fast the drawn cursor glides to the tracked point (higher = snappier)
 
 const btn = document.getElementById("camBtn");
 const video = document.getElementById("cam");
@@ -48,10 +49,10 @@ class OneEuro {
   }
   reset() { this.x = null; this.dx = 0; }
 }
-const fx = new OneEuro(), fy = new OneEuro(), fpinch = new OneEuro(2.0, 0.0);
+const fx = new OneEuro(0.6, 0.02), fy = new OneEuro(0.6, 0.02), fpinch = new OneEuro(2.0, 0.0);
 
 const state = {
-  pos: { x: innerWidth / 2, y: innerHeight / 2 },
+  pos: { x: innerWidth / 2, y: innerHeight / 2 }, shown: { x: innerWidth / 2, y: innerHeight / 2 }, lastFrame: 0,
   pinching: false, pending: 0, pinchStart: null, dragging: false, lastDrag: null,
   lastSeen: 0, anchor: null, palmSince: 0, zoomPrev: null, zoomFrames: 0,
   fist: false, fistPending: 0, dwellNode: null, dwellStart: 0, dwellAt: null, dwellDone: null,
@@ -62,10 +63,15 @@ const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
 // hand size = wrist to index knuckle + index knuckle to pinky knuckle (stable at any distance from camera)
 const handSize = (h) => (d3(h[0], h[5]) + d3(h[5], h[17])) / 2;
 const pinchRatio = (h) => d3(h[THUMB], h[INDEX]) / handSize(h);
-// mirror x so moving your hand right moves things right; use the central 70% of the frame
-const toScreen = (p) => [Math.min(1, Math.max(0, (1 - p.x - 0.15) / 0.7)) * innerWidth,
-  Math.min(1, Math.max(0, (p.y - 0.15) / 0.7)) * innerHeight];
-const midpoint = (h) => ({ x: (h[THUMB].x + h[INDEX].x) / 2, y: (h[THUMB].y + h[INDEX].y) / 2 });
+// mirror x so moving your hand right moves things right. Only the middle of the camera picture is used,
+// so a small hand movement reaches every corner of the screen and your hand never has to leave the frame.
+const REACH = { x0: 0.2, x1: 0.8, y0: 0.12, y1: 0.72 };
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const toScreen = (p) => [clamp01((1 - p.x - REACH.x0) / (REACH.x1 - REACH.x0)) * innerWidth,
+  clamp01((p.y - REACH.y0) / (REACH.y1 - REACH.y0)) * innerHeight];
+// cursor point: between thumb tip and index tip, pulled a little toward the index knuckle,
+// which barely moves when you pinch, so pinching doesn't nudge the cursor off its bubble
+const midpoint = (h) => ({ x: (h[THUMB].x + h[INDEX].x) * 0.35 + h[5].x * 0.3, y: (h[THUMB].y + h[INDEX].y) * 0.35 + h[5].y * 0.3 });
 // a finger is curled when its tip is closer to the wrist than its middle joint is
 function fistClosed(h) {
   return [[8, 6], [12, 10], [16, 14], [20, 18]].every(([t, p]) => d3(h[t], h[0]) < d3(h[p], h[0]));
@@ -92,16 +98,18 @@ async function start() {
       const files = await FilesetResolver.forVisionTasks(`${VISION}/wasm`);
       const opts = (delegate) => ({
         baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: "VIDEO", numHands: 2,
-        minHandDetectionConfidence: 0.7, minHandPresenceConfidence: 0.7, minTrackingConfidence: 0.7,
+        // lower thresholds keep hold of your hand in dim light or at an angle instead of dropping it
+        minHandDetectionConfidence: 0.55, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
       });
       try { landmarker = await HandLandmarker.createFromOptions(files, opts("GPU")); }
       catch { landmarker = await HandLandmarker.createFromOptions(files, opts("CPU")); }  // some PCs lack WebGL2
     }
-    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, frameRate: { ideal: 30 } } });
+    // 640x480 is plenty for hand landmarks and lets detection keep up with the camera (more updates = smoother)
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } } });
     video.srcObject = stream; await video.play();
     layer.hidden = false; hint.hidden = false; cursor.hidden = false; running = true;
     btn.textContent = "✋ Camera on"; btn.classList.add("on"); window.HUD.setMode("GESTURE");
-    requestAnimationFrame(tick);
+    requestAnimationFrame(tick); requestAnimationFrame(glide);
   } catch (e) {
     btn.textContent = "✋ Camera"; window.HUD.setMode("STANDBY");
     console.error("Camera/gesture setup failed:", e);
@@ -112,7 +120,18 @@ function stop() {
   running = false; stream && stream.getTracks().forEach((t) => t.stop());
   layer.hidden = true; hint.hidden = true; cursor.hidden = true;
   btn.textContent = "✋ Camera"; btn.classList.remove("on"); window.HUD.setMode("STANDBY");
-  releaseAll();
+  releaseAll(); window.HUD.handActive(false);
+}
+
+// The camera gives ~30 updates a second; the screen draws 60+. Between camera frames the cursor glides
+// toward the latest tracked point, so it moves smoothly instead of jumping.
+function glide(now) {
+  if (!running) return;
+  const dt = Math.min(0.05, (now - (state.lastFrame || now)) / 1000); state.lastFrame = now;
+  const k = 1 - Math.exp(-FOLLOW * dt), sh = state.shown;
+  sh.x += (state.pos.x - sh.x) * k; sh.y += (state.pos.y - sh.y) * k;
+  cursor.style.transform = `translate(${sh.x}px, ${sh.y}px)`;
+  requestAnimationFrame(glide);
 }
 
 btn.addEventListener("click", () => (running ? stop() : start()));
@@ -155,10 +174,10 @@ function tick(now) {
   const hands = landmarker.detectForVideo(video, now).landmarks || [];
 
   if (!hands.length) {
-    if (now - state.lastSeen > LOST_GRACE_MS) { releaseAll(); drawHands([], null, 1); }
+    if (state.lastSeen && now - state.lastSeen > LOST_GRACE_MS) { releaseAll(); drawHands([], null, 1); state.lastSeen = 0; window.HUD.handActive(false); }
     return requestAnimationFrame(tick);
   }
-  state.lastSeen = now;
+  state.lastSeen = now; window.HUD.handActive(true);
 
   // two-hand zoom: both hands pinched for a few frames
   if (hands.length === 2 && pinchRatio(hands[0]) < PINCH_ON && pinchRatio(hands[1]) < PINCH_ON) {
@@ -183,7 +202,6 @@ function tick(now) {
   const pos = state.pos;
   if (!state.pinching || state.dragging) { pos.x = fx.filter(rx, now); pos.y = fy.filter(ry, now); }
   else { fx.filter(rx, now); fy.filter(ry, now); }  // keep the filter warm, but freeze the cursor while deciding click vs drag
-  cursor.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
 
   // ---- fist: grab and drag a single bubble (checked first, so a closing fist never counts as a pinch)
   const fistNow = fistClosed(h);
