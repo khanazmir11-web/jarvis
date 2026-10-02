@@ -241,7 +241,6 @@ INJECTION_PATTERNS = [
     (r"disregard (your|the) (rules|instructions|system prompt)", "prompt-injection phrase"),
     (r"you are now (in )?(developer|dan|jailbreak) mode", "jailbreak phrase"),
     (r"(forward|send|upload|exfiltrate) (all|every|the) (emails?|files?|passwords?|contacts|data)", "bulk data exfiltration"),
-    (r"(password|passcode|2fa|one[- ]time code|otp|seed phrase|private key)", "asks for credentials"),
     (r"[A-Za-z0-9+/]{120,}={0,2}", "large encoded blob"),
     (r"https?://\S*(\?|&)(data|token|key|q)=\S{20,}", "URL carrying data out"),
     (r"(bypassPermissions|dangerously-skip-permissions|--bare|ANTHROPIC_API_KEY)", "tries to weaken JARVIS safety"),
@@ -255,8 +254,19 @@ SECRET_PATTERNS = [
 ]
 
 
+# Asking someone to hand over a secret ("verify your password", "send me the code"), not just mentioning one.
+# "Never share your password" is advice, so a no/never/don't just before it doesn't count.
+CRED_ASK = re.compile(r"\b(enter|send|share|give|type|tell|provide|confirm|verify|reply with|paste|update)\b(?:\W+\w+){0,4}?\W+"
+                      r"(password|passcode|2fa code|one[- ]time code|otp|verification code|seed phrase|private key|recovery code)", re.I)
+NEGATED = re.compile(r"\b(never|don.?t|do not|not|no one|nobody|avoid)\b[^.!?\n]{0,40}$", re.I)
+
+
 def scan(text):
     flags = []
+    for m in CRED_ASK.finditer(text or ""):
+        if not NEGATED.search((text or "")[max(0, m.start() - 60):m.start()]):
+            flags.append("asks for credentials")
+            break
     for pat, why in INJECTION_PATTERNS:
         if re.search(pat, text or "", re.I):
             flags.append(why)
@@ -321,7 +331,10 @@ Hard rules you must follow:
    ```
 4. Never ask for, repeat, or store passwords, 2FA codes or API keys.
 5. Security help is defensive only: explain attacks so the user can recognise and block them.
-Known accounts (id: status): {accounts}
+6. Which accounts are connected, and which of their tools you may use, is detected automatically when the
+   user presses ⟳ Accounts and kept in logs/accounts_state.json. config/accounts.json only describes the
+   accounts; its "planned" status and empty tool lists there are normal. Never tell the user to edit it.
+Known accounts (id: status, as detected): {accounts}
 """
 
 
