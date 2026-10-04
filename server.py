@@ -592,6 +592,11 @@ WRITE_WORDS = re.compile(r"(send|create|update|delete|trash|share|modify|move|re
 READ_WORDS = re.compile(r"^(search|list|get|read|fetch|find|query|download|describe|view|lookup|check|count|summar)")
 
 
+# Claude Code's own sign-in to your Claude account has lapsed (not one of your connected accounts)
+AUTH_FAIL = re.compile(r"(/login|not logged in|failed to authenticate|oauth (session|token) (has )?expired|invalid api key)", re.I)
+RELOGIN = ("Claude Code on this PC needs signing in again (its sign-in expired). In PowerShell run: "
+           "& $env:JARVIS_CLAUDE_BIN   then type /login, pick your Claude subscription, then /exit, and press ⟳ Accounts.")
+
 LIST_PROMPT = ("Reply with only the exact names of every tool or deferred tool available to you whose name starts "
                "with mcp__, one per line, no other text. If there are none, reply NONE.")
 
@@ -607,6 +612,7 @@ def discover():
     timer = threading.Timer(150, proc.kill)
     timer.start()
     tools, servers, said = None, None, ""
+    discover.said = ""
     try:
         for line in proc.stdout:
             try:
@@ -622,6 +628,7 @@ def discover():
                 break
             elif ev.get("type") == "assistant":
                 said += "".join(c.get("text", "") for c in ev.get("message", {}).get("content", []) if isinstance(c, dict))
+        discover.said = said
         if tools is not None:
             tools = tools + re.findall(r"\bmcp__[A-Za-z0-9_\-]+__[A-Za-z0-9_\-]+", said)
         return tools, servers
@@ -661,6 +668,8 @@ def refresh_accounts():
     except OSError as e:
         return {"error": f"could not start Claude Code: {e}"}
     seen = mcp_list()
+    if AUTH_FAIL.search(getattr(discover, "said", "")):
+        return {"error": RELOGIN, "seen": seen}
     if tools is None:
         return {"error": "Claude Code did not report its tools. Is it signed in?", "seen": seen}
     if not any(t.startswith("mcp__") for t in tools) and not servers and not seen:
@@ -726,7 +735,9 @@ def briefing(force=False):
     flags = scan(text)
     text = BLOCK.sub("", text).strip()
     out = {"date": today, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "text": text, "flags": flags}
-    if "/login" not in text and not text.startswith("JARVIS could not reach"):  # don't keep a failed briefing for the whole day
+    if AUTH_FAIL.search(text):
+        out["text"] = text + "\n" + RELOGIN
+    elif not text.startswith("JARVIS could not reach"):  # don't keep a failed briefing for the whole day
         (LOGS / "briefing.json").write_text(json.dumps(out), encoding="utf-8")
     audit("briefing", tools=tools, flags=flags)
     return out
