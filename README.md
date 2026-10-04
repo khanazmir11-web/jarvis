@@ -44,6 +44,16 @@ claude.ai has no connector for your own YouTube account, so JARVIS ships its own
 
 To disconnect: delete `%USERPROFILE%\.jarvis\youtube_token.json` and run `claude mcp remove --scope user youtube`.
 
+## Google Classroom (read-only)
+
+`classroom_mcp.py` works like the YouTube connector and uses the same Google Cloud project and client file. It can list your classes, work due soon that you haven't handed in, recent coursework and teacher announcements. It can't hand in, post or change anything.
+
+1. In the same Google Cloud project, enable the **Google Classroom API**: https://console.cloud.google.com/apis/library/classroom.googleapis.com
+2. Double-click `connect-classroom.bat` and sign in. Tick every box (all three are read-only).
+3. In JARVIS press **⟳ Accounts**.
+
+To disconnect: delete `%USERPROFILE%\.jarvis\classroom_token.json` and run `claude mcp remove --scope user classroom`.
+
 ## Web links in the bubbles
 
 Every account bubble opens its website: double-click it, select it and press **Open ↗**, or say/type "open YouTube". Pages open in your normal browser, so wherever you're signed in there, you're signed in here.

@@ -25,7 +25,8 @@ from pathlib import Path
 DIR = Path(os.environ.get("JARVIS_SECRETS") or Path.home() / ".jarvis")
 CLIENT = DIR / "youtube_client.json"
 TOKEN = DIR / "youtube_token.json"
-SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+SCOPE = "https://www.googleapis.com/auth/youtube.readonly"   # space-separated if more than one
+NAME = "youtube"   # used in messages and the MCP server name; classroom_mcp.py reuses this file with its own values
 API = os.environ.get("YOUTUBE_API_BASE", "https://www.googleapis.com/youtube/v3")
 _access = {"token": None, "until": 0}
 
@@ -62,7 +63,7 @@ def login():
                 self.send_response(400); self.end_headers(); return
             got.update({k: v[0] for k, v in q.items()})
             self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers()
-            self.wfile.write(b"<h2>JARVIS: YouTube connected (read-only). You can close this tab.</h2>")
+            self.wfile.write(f"<h2>JARVIS: {NAME} connected (read-only). You can close this tab.</h2>".encode())
 
         def log_message(self, *a):
             pass
@@ -73,7 +74,7 @@ def login():
         "client_id": c["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": SCOPE,
         "access_type": "offline", "prompt": "consent", "state": state,
         "code_challenge": challenge, "code_challenge_method": "S256"})
-    print("Opening your browser to sign in to YouTube (read-only)...")
+    print(f"Opening your browser to sign in to {NAME} (read-only)...")
     print("If it doesn't open, paste this address into your browser:\n" + url)
     webbrowser.open(url)
     while "code" not in got and "error" not in got:
@@ -83,8 +84,9 @@ def login():
     tok = post_form(c.get("token_uri", "https://oauth2.googleapis.com/token"), {
         "code": got["code"], "client_id": c["client_id"], "client_secret": c.get("client_secret", ""),
         "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier})
-    if SCOPE not in tok.get("scope", SCOPE):
-        raise RuntimeError("Google didn't grant YouTube read access. Run login again and tick the box.")
+    granted = tok.get("scope", SCOPE).split()
+    if any(sc not in granted for sc in SCOPE.split()):
+        raise RuntimeError(f"Google didn't grant all the {NAME} read access. Run login again and tick every box.")
     DIR.mkdir(parents=True, exist_ok=True)
     TOKEN.write_text(json.dumps({"refresh_token": tok["refresh_token"]}), encoding="utf-8")
     try:
@@ -98,7 +100,7 @@ def access_token():
     if _access["token"] and time.time() < _access["until"] - 60:
         return _access["token"]
     if not TOKEN.exists():
-        raise RuntimeError("YouTube isn't signed in yet. Run: python youtube_mcp.py login")
+        raise RuntimeError(f"{NAME} isn't signed in yet. Run its connect-{NAME.lower()}.bat (or: python {NAME.lower()}_mcp.py login)")
     c = client()
     tok = post_form(c.get("token_uri", "https://oauth2.googleapis.com/token"), {
         "client_id": c["client_id"], "client_secret": c.get("client_secret", ""),
@@ -114,7 +116,7 @@ def api(path, **params):
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"YouTube API error {e.code}: {e.read().decode('utf-8', 'replace')[:300]}") from None
+        raise RuntimeError(f"{NAME} API error {e.code}: {e.read().decode('utf-8', 'replace')[:300]}") from None
 
 
 def clamp(v, lo, hi, default):
@@ -209,7 +211,7 @@ def handle(msg):
         return None  # notification
     if method == "initialize":
         result = {"protocolVersion": msg.get("params", {}).get("protocolVersion", "2024-11-05"),
-                  "capabilities": {"tools": {}}, "serverInfo": {"name": "jarvis-youtube", "version": "1.0"}}
+                  "capabilities": {"tools": {}}, "serverInfo": {"name": "jarvis-" + NAME.lower(), "version": "1.0"}}
     elif method == "tools/list":
         result = {"tools": [{"name": n, "description": d + " Read-only.", "annotations": {"readOnlyHint": True},
                              "inputSchema": {"type": "object", "properties": p}} for n, (_, d, p) in TOOLS.items()]}

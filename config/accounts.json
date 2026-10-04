@@ -33,7 +33,7 @@
       "id": "classroom", "url": "https://classroom.google.com",
       "name": "Google Classroom / e-learning", "group": "E-learning", "status": "planned",
       "match": "classroom",
-      "how": "Google Classroom API through an MCP server; other learning sites only if they publish an API.",
+      "how": "Read-only, built into JARVIS (classroom_mcp.py) using the same Google Cloud project as YouTube. Enable the Classroom API there, then run connect-classroom.bat. See README: Google Classroom.",
       "read_tools": [], "write_tools": []
     },
     {
