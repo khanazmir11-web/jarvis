@@ -44,20 +44,6 @@
       "read_tools": [], "write_tools": []
     },
     {
-      "id": "playstore", "url": "https://play.google.com/store",
-      "name": "Google Play Store", "group": "Stores", "status": "unsupported",
-      "match": "",
-      "how": "No API for a person's own purchases or library. The Play Developer API is only for app publishers. Unofficial scrapers break Google's terms and risk your account.",
-      "read_tools": [], "write_tools": []
-    },
-    {
-      "id": "psn", "url": "https://store.playstation.com",
-      "name": "PlayStation Store", "group": "Stores", "status": "unsupported",
-      "match": "",
-      "how": "Sony has no public API. Unofficial PSN libraries break Sony's terms and risk a ban.",
-      "read_tools": [], "write_tools": []
-    },
-    {
       "id": "servers", "name": "Servers (afa?)", "group": "Infra", "status": "planned",
       "match": "",
       "how": "Waiting on what 'afa servers' means. Servers are usually watched through SSH health checks or a monitoring API.",
