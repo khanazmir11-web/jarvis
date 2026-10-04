@@ -504,7 +504,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/security": security_report,
             "/api/audit": lambda: tail_jsonl(LOGS / "audit.jsonl", 60),
             "/api/alerts": recent_alerts,
-            "/api/briefing": lambda: load_json(LOGS / "briefing.json", {}),
+            "/api/briefing": cached_briefing,
         }
         if path in routes:
             return self.send(200, routes[path]())
@@ -722,6 +722,12 @@ BRIEF_PROMPT = """Morning briefing for {day}. Using only read-only tools on the 
 4. Weekly check-up item: "{checkup}"
 Keep it under 120 words, spoken style (it will be read aloud), sarcastic but useful.
 If an account is not connected, say so in one short line instead of guessing."""
+
+
+def cached_briefing():
+    """Today's saved briefing, unless it's a failed one (an older JARVIS saved those)."""
+    b = load_json(LOGS / "briefing.json", {})
+    return {} if AUTH_FAIL.search(b.get("text", "")) else b
 
 
 def briefing(force=False):
