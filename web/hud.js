@@ -541,6 +541,7 @@
     $("msg").value = ""; say("me", text);
     const op = text.match(/^(?:hey\s+jarvis[,\s]*)?(?:please\s+)?(?:open|launch|go to|show me)\s+(.+)/i);
     if (op && openNode(findNode(op[1]))) return;
+    if (/^(?:hey\s+jarvis[,\s]*)?(catch me up|catch up|what'?s new|any updates?)\b/i.test(text)) { catchUp(true); return; }
     const out = say("jarvis", "…");
     document.querySelector(".dial").classList.add("busy"); $("mode").textContent = "THINKING";
     try {
@@ -787,15 +788,22 @@
   $("briefBtn").onclick = () => runBriefing(true);
   $("themeBtn").onclick = () => { const k = Object.keys(THEMES); applyTheme(k[(k.indexOf(theme) + 1) % k.length]); };
   addEventListener("pointerdown", () => audioCtx && audioCtx.resume(), { once: true });
-  async function autoBriefing() {
-    // once a day, the first time you open JARVIS after 5am, if any account is connected
-    const b = await (await api("/api/briefing")).json();
-    const today = new Date().toLocaleDateString("en-CA");
+  // every time JARVIS opens: a spoken catch-up on everything new since last time
+  async function catchUp(force) {
     const any = nodes.some((n) => n.type === "account" && n.status === "connected");
-    if (any && b.date !== today && new Date().getHours() >= 5) runBriefing(false);
-    else if (b.date === today && b.text) say("jarvis", "☀ " + b.text);
+    if (!any) return;
+    const out = say("jarvis", "⟲ Catching up on everything since you were last here…");
+    document.querySelector(".dial").classList.add("busy"); $("mode").textContent = "CATCHING UP";
+    try {
+      const c = await (await api("/api/catchup", { force: !!force })).json();
+      if (!c.text) { out.remove(); return; }
+      out.textContent = "⟲ " + (c.reused ? "(from a few minutes ago) " : "") + c.text;
+      if (c.flags && c.flags.length) say("jarvis", "⚠ Catch-up flagged by scanner: " + c.flags.join(", "));
+      if (!c.reused) speak(c.text);
+    } catch (e) { out.textContent = "⚠ " + e; }
+    document.querySelector(".dial").classList.remove("busy"); idleMode();
   }
 
-  loadGraph().then(() => { requestAnimationFrame(loop); setTimeout(autoBriefing, 2500); });
+  loadGraph().then(() => { requestAnimationFrame(loop); setTimeout(catchUp, 2500); });
   refresh(); setInterval(refresh, 15000);
 })();

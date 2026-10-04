@@ -54,6 +54,10 @@ To disconnect: delete `%USERPROFILE%\.jarvis\youtube_token.json` and run `claude
 
 To disconnect: delete `%USERPROFILE%\.jarvis\classroom_token.json` and run `claude mcp remove --scope user classroom`.
 
+## Catch-up when JARVIS opens
+
+Every time you open JARVIS it reads your connected accounts and tells you what's new since last time: the one thing that needs you, then a line per account (email, calendar, Drive shares, new YouTube uploads, Classroom work due), plus its own alerts and new threats. Reopening within 20 minutes shows the last one instead of reading everything again. Say or type "catch me up" any time for a fresh one. **☀ Brief** is still there for the full morning briefing.
+
 ## Web links in the bubbles
 
 Every account bubble opens its website: double-click it, select it and press **Open ↗**, or say/type "open YouTube". Pages open in your normal browser, so wherever you're signed in there, you're signed in here.
