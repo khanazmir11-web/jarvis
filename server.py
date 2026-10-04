@@ -348,8 +348,25 @@ def claude_cmd(prompt, allowed, system):
     return cmd
 
 
+REFRESH_LOCK = threading.Lock()
+
+
 def run_claude(prompt, allowed, system, on_text=None):
-    """Run Claude Code headless on your subscription and return the final text."""
+    """Run Claude Code headless on your subscription and return the final text.
+    When several copies start at once (briefing, hourly check, account check), they can race to renew the
+    Claude sign-in and the losers report "OAuth session expired". The winner has renewed it by then, so
+    a failed run is retried, one at a time."""
+    final, tools_used = _run_claude_once(prompt, allowed, system, on_text)
+    for wait in (3, 8):
+        if not AUTH_FAIL.search(final or ""):
+            break
+        with REFRESH_LOCK:
+            time.sleep(wait)
+            final, tools_used = _run_claude_once(prompt, allowed, system, on_text)
+    return final, tools_used
+
+
+def _run_claude_once(prompt, allowed, system, on_text=None):
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     proc = subprocess.Popen(claude_cmd(prompt, allowed, system), cwd=VAULT, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -621,7 +638,8 @@ def discover():
                 continue
             if ev.get("type") == "system" and ev.get("subtype") == "init":
                 tools, servers = ev.get("tools", []), ev.get("mcp_servers", [])
-                if any(t.startswith("mcp__") for t in tools):
+                if any(t.startswith("mcp__") for t in tools) and not any(
+                        srv.get("status") == "pending" for srv in servers):
                     return tools, servers
             elif ev.get("type") == "result":
                 said = str(ev.get("result") or said)
