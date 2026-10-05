@@ -882,7 +882,16 @@ STOP = {"with", "that", "this", "your", "from", "have", "were", "been", "they", 
 
 
 def alert_words(text):
-    return {w for w in re.findall(r"[a-z0-9:']+", text.lower()) if len(w) > 3 and w not in STOP}
+    words = {w.strip(":'") for w in re.findall(r"[a-z0-9:']+", text.lower())}
+    return {w for w in words if len(w) > 3 and w not in STOP}
+
+
+COMMON_CAPS = {"new", "the", "your", "you", "if", "a", "an", "someone", "alert", "email", "ignore", "check", "not", "no", "this",
+               "security", "sign", "with", "am", "pm", "welcome", "probably", "likely", "don't", "it", "on", "in", "for"}
+
+
+def alert_names(text):
+    return {w.lower().removesuffix("'s") for w in re.findall(r"\b[A-Z][A-Za-z0-9']+", text)} - COMMON_CAPS
 
 
 def same_alert(a, b, hours=48):
@@ -893,7 +902,11 @@ def same_alert(a, b, hours=48):
     except (KeyError, ValueError):
         apart = 0
     wa, wb = a.get("words") or alert_words(a.get("text", "")), alert_words(b.get("text", ""))
-    return apart < hours * 3600 and bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.5
+    if apart >= hours * 3600 or not (wa and wb):
+        return False
+    shared = len(wa & wb)
+    names = alert_names(a.get("text", "")) & alert_names(b.get("text", ""))   # e.g. the same sender and the same person
+    return (shared >= 3 and shared / min(len(wa), len(wb)) >= 0.6) or len(names) >= 2
 
 
 def watch_pass(mins=60):
