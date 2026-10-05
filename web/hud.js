@@ -806,4 +806,12 @@
 
   loadGraph().then(() => { requestAnimationFrame(loop); setTimeout(catchUp, 2500); });
   refresh(); setInterval(refresh, 15000);
+  // pick up connectors added since last time without pressing ⟳ Accounts (quiet unless something is wrong)
+  setTimeout(async () => {
+    try {
+      const r = await (await api("/api/refresh-accounts", {})).json();
+      if (r.error) say("jarvis", "⚠ " + r.error);
+      loadGraph();
+    } catch (e) { /* the button still works */ }
+  }, 4000);
 })();

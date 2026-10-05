@@ -674,6 +674,14 @@ def mcp_list():
     return seen
 
 
+# JARVIS's own connectors are read-only by construction. If `claude mcp list` says one is Connected but the
+# discovery turn missed its tools (it was still starting), these names are used instead.
+OWN_SERVERS = {
+    "youtube": ["get_my_channel", "list_subscriptions", "list_latest_videos", "list_my_playlists", "search_videos", "get_video"],
+    "classroom": ["list_courses", "list_upcoming_work", "list_coursework", "list_announcements"],
+}
+
+
 def classify(tool):
     short = tool.split("__", 2)[-1].lower()
     if WRITE_WORDS.search(short):
@@ -700,6 +708,9 @@ def refresh_accounts():
         if acc["status"] == "unsupported" or not acc.get("match"):
             continue
         mine = sorted({t for t in tools if t.startswith("mcp__") and acc["match"] in t.split("__")[1].lower()})
+        if not mine and acc["id"] in OWN_SERVERS and any(
+                x["name"].lower() == acc["id"] and "connected" in x["status"].lower() for x in seen):
+            mine = [f"mcp__{acc['id']}__{t}" for t in OWN_SERVERS[acc["id"]]]
         waiting = [srv["name"] for srv in servers or [] if acc["match"] in srv.get("name", "").lower()
                    and srv.get("status") == "needs-auth"]
         if mine:
@@ -834,7 +845,9 @@ Also check new emails for phishing or scams (fake login links, urgent payment, p
 Reply with one line per finding, in exactly this form:
 <account id> | <info|warn|phishing|setup> | <what happened, under 20 words>
 Use "setup" when you could not check an account at all (its tools are missing or it lacks permission).
-If nothing needs attention, reply exactly: ALL CLEAR"""
+Already reported, so do not repeat or reword these (only mention one again if something new happened):
+{already}
+If nothing new needs attention, reply exactly: ALL CLEAR"""
 
 
 SETUP_HINT = re.compile(r"(couldn.t check|could not check|skipped|no \w+ connector|lacks? .*(scope|permission)|"
@@ -849,13 +862,45 @@ def recent_alerts(n=30):
         if a.get("level") == "setup" or (a.get("level") != "phishing" and SETUP_HINT.search(a.get("text", ""))):
             a["level"] = "setup"
     newest_setup = {a.get("account"): i for i, a in enumerate(items) if a.get("level") == "setup"}
-    return [a for i, a in enumerate(items) if a.get("level") != "setup" or newest_setup.get(a.get("account")) == i][-n:]
+    items = [a for i, a in enumerate(items) if a.get("level") != "setup" or newest_setup.get(a.get("account")) == i]
+    # the same email reworded on a later pass is one alert: keep the newest wording, at the most serious level
+    kept = []
+    for a in reversed(items):
+        twin = next((k for k in kept if same_alert(k, a)), None)
+        if twin is None:
+            kept.append(dict(a, words=alert_words(a.get("text", ""))))
+            continue
+        twin["words"] |= alert_words(a.get("text", ""))
+        if RANK.get(a.get("level"), 0) > RANK.get(twin.get("level"), 0):
+            twin["level"] = a["level"]
+    return [{k: v for k, v in a.items() if k != "words"} for a in kept[::-1][-n:]]
+
+
+RANK = {"info": 0, "setup": 0, "warn": 1, "phishing": 2}
+STOP = {"with", "that", "this", "your", "from", "have", "were", "been", "they", "them", "email", "about", "probably",
+        "likely", "maybe", "someone", "check", "ignore", "alert"}
+
+
+def alert_words(text):
+    return {w for w in re.findall(r"[a-z0-9:']+", text.lower()) if len(w) > 3 and w not in STOP}
+
+
+def same_alert(a, b, hours=48):
+    if a.get("account") != b.get("account"):
+        return False
+    try:
+        apart = abs(time.mktime(time.strptime(a["ts"], "%Y-%m-%dT%H:%M:%S")) - time.mktime(time.strptime(b["ts"], "%Y-%m-%dT%H:%M:%S")))
+    except (KeyError, ValueError):
+        apart = 0
+    wa, wb = a.get("words") or alert_words(a.get("text", "")), alert_words(b.get("text", ""))
+    return apart < hours * 3600 and bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.5
 
 
 def watch_pass(mins=60):
     if not any(a["status"] == "connected" and a.get("read_tools") for a in accounts()):
         return {"skipped": "no connected accounts"}
-    text, tools = run_claude(WATCH_PROMPT.format(mins=mins), read_allowed(), system_prompt())
+    already = "\n".join(f"- {a['account']}: {a['text']}" for a in recent_alerts(25)) or "- (nothing yet)"
+    text, tools = run_claude(WATCH_PROMPT.format(mins=mins, already=already), read_allowed(), system_prompt())
     flags = scan(text)
     found = []
     ids = {a["id"] for a in accounts()}
