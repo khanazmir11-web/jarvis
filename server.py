@@ -21,7 +21,9 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+import phone_access
 
 ROOT = Path(__file__).resolve().parent
 
@@ -50,6 +52,7 @@ PORT = int(os.environ.get("JARVIS_PORT", "8720"))
 CLAUDE_BIN = os.environ.get("JARVIS_CLAUDE_BIN", "claude")
 TOKEN = secrets.token_urlsafe(24)
 LOCK = threading.Lock()
+PHONE = phone_access.Gate()
 
 for d in (PROPOSALS / "learn", LOGS):
     d.mkdir(parents=True, exist_ok=True)
@@ -288,6 +291,8 @@ def security_report():
     add("Shell/file-write tools blocked in chat", {"Bash", "Write", "Edit"} <= blocked,
         "Bash, Write, Edit in always_blocked_tools")
     add("Server only on this device", HOST == "127.0.0.1", f"listening on {HOST}:{PORT}")
+    if PHONE.host():
+        add("Phone access needs your PIN", True, f"private via Tailscale at {PHONE.host()}")
     add("No paid API key in environment", not os.environ.get("ANTHROPIC_API_KEY"),
         "ANTHROPIC_API_KEY would switch you to per-token billing", "medium")
     gi = (ROOT / ".gitignore").read_text(encoding="utf-8") if (ROOT / ".gitignore").exists() else ""
@@ -492,16 +497,48 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def host_ok(self):
-        host = (self.headers.get("Host") or "").split(":")[0]
-        if host not in ("127.0.0.1", "localhost"):
+        if PHONE.is_remote(self.headers):   # came in through Tailscale from your phone
+            allowed = PHONE.host()
+            if not allowed or PHONE.from_funnel(self.headers):
+                return False
+            names = (allowed, "127.0.0.1", "localhost")
+        else:
+            names = ("127.0.0.1", "localhost")
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        if host not in names:
             return False
         origin = self.headers.get("Origin")
-        return not origin or urlparse(origin).hostname in ("127.0.0.1", "localhost")
+        return not origin or (urlparse(origin).hostname or "").lower() in names
+
+    def phone_locked(self):
+        """True when this request came from another device and hasn't unlocked with the PIN yet."""
+        return PHONE.is_remote(self.headers) and not PHONE.session_ok(self.headers)
+
+    def phone_login(self):
+        length = min(int(self.headers.get("Content-Length") or 0), 2000)
+        pin = (parse_qs(self.rfile.read(length).decode("utf-8", "replace")).get("pin") or [""])[0].strip()
+        cookie, msg = PHONE.login(pin)
+        if not cookie:
+            audit("phone_pin_wrong", msg=msg)
+            with LOCK, open(LOGS / "alerts.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "account": "jarvis", "level": "warn",
+                                    "text": f"Wrong phone PIN typed on a Tailscale device. {msg}"}) + "\n")
+            return self.send(401, phone_access.pin_page(msg), "text/html; charset=utf-8")
+        audit("phone_unlocked")
+        self.send_response(303)
+        self.send_header("Set-Cookie", cookie)
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
         if not self.host_ok():
             return self.send(403, {"error": "blocked host"})
         path = urlparse(self.path).path
+        if self.phone_locked() and not (path.startswith("/web/icon") or path == "/web/manifest.webmanifest"):
+            if path in ("/", "/phone-login"):
+                return self.send(200, phone_access.pin_page(), "text/html; charset=utf-8")
+            return self.send(401, {"error": "enter your phone PIN first"})
         if path == "/":
             html = (WEB / "index.html").read_text(encoding="utf-8").replace("__JARVIS_TOKEN__", TOKEN)
             return self.send(200, html.encode(), "text/html; charset=utf-8")
@@ -528,6 +565,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.host_ok() and PHONE.is_remote(self.headers) and urlparse(self.path).path == "/phone-login":
+            return self.phone_login()
+        if self.phone_locked():
+            return self.send(401, {"error": "enter your phone PIN first"})
         if not self.host_ok() or self.headers.get("X-Jarvis-Token") != TOKEN:
             return self.send(403, {"error": "blocked: bad host, origin or token"})
         path = urlparse(self.path).path

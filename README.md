@@ -19,6 +19,14 @@ No pip installs are needed. Don't set `ANTHROPIC_API_KEY`: it switches you from 
 
 Open http://127.0.0.1:8720 in Chrome or Edge and click the install icon in the address bar (or menu > "Install JARVIS"). It gets its own window, a dock/taskbar icon and the JARVIS logo. The app still only runs on your computer.
 
+## JARVIS on your phone (private, with a PIN)
+JARVIS keeps running on your PC; your phone becomes a second screen for it. Nothing is opened to the internet.
+1. Install Tailscale on the PC (https://tailscale.com/download/windows) and on your phone (App Store / Play Store). Sign in to both with the same account.
+2. On the PC run `setup-phone.bat` and choose a PIN (6+ digits). It runs `tailscale serve` (your own devices only, never funnel) and prints your phone address, `https://<your-pc>.<tailnet>.ts.net/`.
+3. Restart JARVIS. On the phone, with Tailscale on, open that address and type the PIN.
+
+Any device other than the PC needs the PIN. 5 wrong PINs lock phone access for 15 minutes and raise an alert. Requests through Tailscale Funnel are always refused. The PIN is stored only as a salted hash in `%USERPROFILE%\.jarvis\phone.json`. Turn it off with `python phone_access.py off`.
+
 ## Talk to it on WhatsApp (private to you)
 
 This uses Meta's official WhatsApp Business Cloud API. Unofficial "link your personal WhatsApp" libraries break WhatsApp's terms and can get your number banned, so JARVIS doesn't use them.
